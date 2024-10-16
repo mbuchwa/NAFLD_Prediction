@@ -19,10 +19,6 @@ def finetuning(xs_train, ys_train, xs_val, ys_val, xs_test, ys_test, xs_test_umm
     if not os.path.exists(f'models/{model_name}'):
         os.makedirs(f'models/{model_name}')
 
-    # Finetune TabTransformer
-    if model_name == 'tab_transformer':
-        evaluate_ensemble_tab_transformer(xs_test, ys_test, xs_pro, ys_pro, df_cols, classification_type, shap_selected)
-
     # Finetune XGBoost
     if model_name == 'xgb':
         finetune_ensemble_xgb(xs_train, ys_train, xs_val, ys_val, xs_test, ys_test, xs_test_umm, ys_test_umm, df_cols,
@@ -33,26 +29,6 @@ def finetuning(xs_train, ys_train, xs_val, ys_val, xs_test, ys_test, xs_test_umm
         finetune_ensemble_light_gbm(xs_train, ys_train, xs_val, ys_val, xs_test, ys_test, xs_test_umm, ys_test_umm,
                                     df_cols, classification_type, shap_selected)
 
-    # Finetune VI_BNN
-    elif model_name == 'vi_bnn':
-        evaluate_ensemble_vi_bnn(xs_test, ys_test, xs_pro, ys_pro, df_cols, classification_type, shap_selected)
-
-    # Finetune Feed Forward Neural Network
-    elif model_name == 'ffn':
-        evaluate_ensemble_ffn(xs_test, ys_test, xs_pro, ys_pro, df_cols, classification_type, shap_selected)
-
-    # Finetune SVM
-    elif model_name == 'svm':
-        evaluate_ensemble_svm(xs_test, ys_test, xs_pro, ys_pro, df_cols, classification_type, shap_selected)
-
-    # Finetune RF
-    elif model_name == 'rf':
-        finetune_ensemble_rf(xs_train, ys_train, xs_val, ys_val, xs_test, ys_test, xs_test_umm, ys_test_umm,
-                             df_cols, classification_type, shap_selected)
-
-    elif model_name == 'gandalf':
-        evaluate_ensemble_gandalf(xs_test, ys_test, xs_pro, ys_pro, df_cols, classification_type, shap_selected)
-
 
 if __name__ == '__main__':
     model_name = 'xgb'
@@ -60,7 +36,7 @@ if __name__ == '__main__':
     shap_selected = False
     scaling = False
 
-    assert model_name in ['svm', 'rf', 'xgb', 'light_gbm', 'ffn', 'gandalf', 'tab_transformer', 'mcmc_bnn', 'vi_bnn']
+    assert model_name in ['xgb', 'light_gbm']
     assert classification_type in ['cirrhosis', 'fibrosis', 'three_stage', 'two_stage']
 
     if model_name == 'vi_bnn':

@@ -8,7 +8,7 @@ import os
 
 
 def hypertrain_ensemble_tab_transformer(xs_train, ys_train, xs_val, ys_val, xs_test, ys_test, xs_pro, ys_pro, df_cols,
-                                        classification_type, shap_selected, interpret_model=True, testing=False):
+                                        classification_type, shap_selected, interpret_model=False, testing=False):
     models = []
     models_params = []
     model_name = 'tab_transformer_shap_selected' if shap_selected else 'tab_transformer'
@@ -65,6 +65,80 @@ def evaluate_ensemble_tab_transformer(xs_test, ys_test, xs_pro, ys_pro, df_cols,
     prospective = True
     print('----- Prospective Evaluation ------')
     evaluate_performance(models, xs_pro, ys_pro, df_cols, model_name, classification_type, prospective)
+
+
+def finetune_ensemble_tab_transformer(xs_finetune, ys_finetune, xs_val, ys_val, xs_test, ys_test, xs_pro, ys_pro,
+                                      df_cols,
+                                      classification_type, shap_selected, interpret_model=True, testing=False):
+    """
+    Fine-tunes a saved ensemble of TabTransformer models on new data.
+
+    Parameters:
+    xs_finetune (list of np.array): List of feature arrays for fine-tuning.
+    ys_finetune (list of np.array): List of target arrays for fine-tuning.
+    xs_val (list of np.array): List of feature arrays for validation.
+    ys_val (list of np.array): List of target arrays for validation.
+    xs_test (list of np.array): List of feature arrays for testing.
+    ys_test (list of np.array): List of target arrays for testing.
+    xs_pro (list of np.array): List of feature arrays for prospective evaluation.
+    ys_pro (list of np.array): List of target arrays for prospective evaluation.
+    df_cols (list): List of column names used for feature interpretation.
+    classification_type (str): Type of classification (e.g., binary, multi-class).
+    shap_selected (bool): Whether SHAP-selected features were used.
+    interpret_model (bool): Whether to interpret the model using SHAP.
+    testing (bool): Whether to evaluate the model after fine-tuning.
+    """
+    models = []
+    model_name = 'tab_transformer_shap_selected' if shap_selected else 'tab_transformer'
+
+    checkpoint_files = [f for f in os.listdir(f"./models/{model_name}/") if f.endswith('.pth') and classification_type in f]
+
+    # Load each model checkpoint and make predictions
+    y_preds = []
+    for checkpoint_file in checkpoint_files:
+        # Read the respective hyperparam file
+        model_index = checkpoint_file.split('_')[-1].rstrip('.pth')
+        with open(f"./models/tab_transformer/model_params_{classification_type}_{model_index}.txt", "r") as file:
+            # Read the first line
+            dict_str = file.readline().strip()
+
+            # Convert the string representation of the dictionary to a Python dictionary
+            param_dict = eval(dict_str)
+
+        # Load the model checkpoint
+        model = PLTabTransformer(**param_dict,
+                                 df_cols=df_cols)  # Replace YourModelClass with your actual model class
+        model.load_state_dict(torch.load(os.path.join("./models/tab_transformer/", checkpoint_file)))
+        model.train()
+
+        # Fine-tune models
+    for idx, (model, X_finetune, y_finetune, X_val, y_val) in enumerate(
+            zip(models, xs_finetune, ys_finetune, xs_val, ys_val)):
+        print(f'Fine-tuning model {idx}')
+        finetune_tab_transformer_model(model, X_finetune, y_finetune, X_val, y_val, df_cols,
+                                       classification_type=classification_type)
+
+        # Save fine-tuned model
+        finetuned_model_dir = f'./models/{model_name}_finetuned/'
+        os.makedirs(finetuned_model_dir, exist_ok=True)
+        model_path = f"{finetuned_model_dir}/model_{classification_type}_{idx}.pth"
+        torch.save(model.state_dict(), model_path)
+
+        # Save model parameters
+        with open(f'{finetuned_model_dir}/model_params_{classification_type}_{idx}.txt', 'w') as txt_f:
+            txt_f.write(str(model_params[idx]))
+
+    print('------ Finished Fine-Tuning Ensemble ------')
+
+    # Optionally interpret models
+    if interpret_model:
+        interpret(xs_finetune[0], xs_test[0], df_cols, classification_type=classification_type,
+                  model_name=model_name + '_finetuned')
+
+    # Optionally evaluate models
+    if testing:
+        evaluate_ensemble_tab_transformer(xs_test, ys_test, xs_pro, ys_pro, df_cols, classification_type, shap_selected,
+                                          model_name=model_name + '_finetuned')
 
 
 def hypertrain_tab_transformer_model(x_train, y_train, x_val, y_val, df_cols, scoring='neg_log_loss',

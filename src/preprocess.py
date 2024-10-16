@@ -311,7 +311,7 @@ def preprocess(df, data_type='train', classification_type='fibrosis', scaling=Fa
 
 
 def analyze_fib4(dfs, classification_type='fibrosis', data_type='train', select_patients_from_mainz=False,
-                 subgroup_analysis=False):
+                 subgroup_analysis=True):
     """
     Computes the FIB4 classification performances on the data sets.
     Args:
@@ -337,9 +337,6 @@ def analyze_fib4(dfs, classification_type='fibrosis', data_type='train', select_
 
     if not os.path.exists(f'outputs/fib4'):
         os.makedirs(f'outputs/fib4')
-
-    cms = []
-    reports = []
 
     # for i, df in enumerate(dfs):
     # Take first imputed df

@@ -80,7 +80,7 @@ def evaluate_ensemble_xgboost(xs_test, ys_test, xs_pro, ys_pro, df_cols, classif
 
 
 def finetune_ensemble_xgb(xs_finetune, ys_finetune, xs_val, ys_val, xs_test, ys_test, xs_umm, ys_umm, df_cols,
-                          classification_type, shap_selected, interpret_model=False, testing=True):
+                          classification_type, shap_selected, interpret_model=True, testing=True):
     """
     Fine-tunes a saved XGBoost model on new data.
 
@@ -115,7 +115,7 @@ def finetune_ensemble_xgb(xs_finetune, ys_finetune, xs_val, ys_val, xs_test, ys_
     # Save fine-tuned models
     finetuned_model_dir = f'./models/{model_name}_finetuned/'
     os.makedirs(finetuned_model_dir, exist_ok=True)
-    finetuned_model_path = f'{finetuned_model_dir}/model_{classification_type}_finetuned.pickle'
+    finetuned_model_path = f'{finetuned_model_dir}/model_{classification_type}.pickle'
 
     with open(finetuned_model_path, "wb") as f:
         pickle.dump(models, f)
@@ -371,7 +371,7 @@ def hypertrain_xgb_model(x_train, y_train, x_val, y_val, early_stopping_rounds=1
     # breakpoint()
     # # ---------------------------------------------------------
 
-    model = xgb.XGBClassifier(tree_method='hist')
+    model = xgb.XGBClassifier(tree_method='hist', early_stopping_rounds=early_stopping_rounds)
 
     hp_space = {
         'max_depth': np.arange(1, 40),
@@ -389,8 +389,7 @@ def hypertrain_xgb_model(x_train, y_train, x_val, y_val, early_stopping_rounds=1
         random_state=42,
     )
 
-    clf.fit(x_train, y_train, sample_weight=classes_weights, eval_set=[(x_val, y_val)], verbose=0,
-            early_stopping_rounds=early_stopping_rounds)
+    clf.fit(x_train, y_train, sample_weight=classes_weights, eval_set=[(x_val, y_val)], verbose=0)
 
     print()
     print(f'max_depth: {clf.best_estimator_.max_depth}')

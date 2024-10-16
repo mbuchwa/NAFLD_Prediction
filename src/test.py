@@ -51,7 +51,7 @@ def testing(xs_test, ys_test, xs_pro, ys_pro, df_cols, classification_type, mode
 
 
 if __name__ == '__main__':
-    model_name = 'rf'
+    model_name = 'light_gbm'
     classification_type = 'fibrosis'
     shap_selected = False
     scaling = False
@@ -65,6 +65,34 @@ if __name__ == '__main__':
 
     _, _, _, _, xs_test, ys_test, xs_pro, ys_pro, df_cols = preprare_data(classification_type, shap_selected, scaling,
                                                                           select_patients=select_patients)
+
+
+    # Dictionary translating german into englisch
+    dict_germ_eng = {
+        'Thrombozyten (Mrd/l)': 'Platelets (Billion/l)',
+        'MCV (fl)': 'MCV (fl)',
+        'Quick (%)': 'Quick (%)',
+        'INR': 'INR',
+        'Leukozyten (Mrd/l)': 'Leukocytes (Billion/l)',
+        'ASAT (U/I)': 'ASAT (U/l)',
+        'PTT (sek)': 'PTT (sec)',
+        'ALAT (U/I)': 'ALAT (U/l)',
+        'Age': 'Age',
+        'IgG (g/l)': 'IgG (g/l)',
+        'Albumin (g/l)': 'Albumin (g/l)',
+        'HbA1c (%)': 'HbA1c (%)',
+        'Bilrubin gesamt (mg/dl)': 'Total Bilirubin (mg/dl)',
+        'AP (U/I)': 'AP (U/l)',
+        'Harnstoff': 'Urea',
+        'Hb (g/dl)': 'Hb (g/dl)',
+        'Kalium': 'Potassium',
+        'GGT (U/I)': 'GGT (U/l)',
+        'Kreatinin (mg/dl)': 'Creatinine (mg/dl)',
+        'GRF (berechnet) (ml/min)': 'GFR (calculated) (ml/min)'
+    }
+
+    df_cols = [dict_germ_eng[biomarker] for biomarker in df_cols]
+
 
     print(f'\n ----- Testing model {model_name} | Task {classification_type} ----- \n')
     print('-------------------------------------------')

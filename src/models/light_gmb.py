@@ -19,7 +19,7 @@ def hypertrain_ensemble_light_gbm(xs_train, ys_train, xs_val, ys_val, xs_test, y
     # Train models
     for idx, (X_train, y_train, X_val, y_val) in enumerate(zip(xs_train, ys_train, xs_val, ys_val)):
         print(f'Training model {idx}')
-        models.append(hypertrain_light_gbm_model(X_train, y_train, X_val, y_val, classification_type=classification_type))
+        models.append(hypertrain_light_gbm_model(X_train, y_train, X_val, y_val, classification_type=classification_type, index=idx))
 
     # Save models
     model_path = f'models/{model_name}/model_{classification_type}.pickle'
@@ -98,7 +98,9 @@ def finetune_ensemble_light_gbm(xs_finetune, ys_finetune, xs_val, ys_val, xs_tes
     for idx, (model, X_finetune, y_finetune, X_val, y_val) in enumerate(
             zip(models, xs_finetune, ys_finetune, xs_val, ys_val)):
         print(f'Fine-tuning model {idx}')
-        model.fit(X_finetune, y_finetune, eval_set=[(X_val, y_val)], eval_metric='multi_logloss' if classification_type == 'three_stage' else 'rmse')
+        lgb.LGBMClassifier().fit(X_finetune, y_finetune, eval_set=[(X_val, y_val)],
+                  eval_metric='multi_logloss' if classification_type == 'three_stage' else 'logloss',
+                  callbacks=[lgb.early_stopping(stopping_rounds=10)])
         models[idx] = model
 
     print('------ Finished Fine-Tuning Ensemble ------')
@@ -241,7 +243,7 @@ def finetune_ensemble_light_gbm(xs_finetune, ys_finetune, xs_val, ys_val, xs_tes
 #     return np.array(indices)
 
 
-def hypertrain_light_gbm_model(x_train, y_train, x_val, y_val, classification_type='fibrosis'):
+def hypertrain_light_gbm_model(x_train, y_train, x_val, y_val, classification_type='fibrosis', index=0):
     """
     Trains a model on the provided features (x_train) and labels (y_train) with early stopping based on validation loss.
 
@@ -273,7 +275,7 @@ def hypertrain_light_gbm_model(x_train, y_train, x_val, y_val, classification_ty
     # # Print the logistic regression equation
     # print("Logistic Regression Equation:")
     # print(
-    #     f"log-odds = {intercept:.4f} + ({coef_dict['Thrombozyten (Mrd/l)']:.4f} * Thrombozyten (Mrd/l)) + ({coef_dict['MCV (fl)']:.4f} * MCV (fl)) + ({coef_dict['INR']:.4f} * INR)")
+    #     f"log-odds = {intercept:.4f} + ({coef_dict[feature_names[0]]:.4f} * Thrombozyten (Mrd/l)) + ({coef_dict[feature_names[1]]:.4f} * MCV (fl)) + ({coef_dict[feature_names[2]]:.4f} * INR)")
     #
     # # To get the probability, use the sigmoid function
     # print("\nProbability of positive class (P):")
@@ -291,6 +293,7 @@ def hypertrain_light_gbm_model(x_train, y_train, x_val, y_val, classification_ty
     # tpr = tp / (tp + fn)  # True Positive Rate (Recall)
     #
     # # Print metrics
+    # print('------ Classification Metrics Regression -------')
     # print(f"Accuracy: {accuracy:.4f}")
     # print(f"F1 Score: {f1:.4f}")
     # print(f"Positive Predictive Value (PPV): {ppv:.4f}")

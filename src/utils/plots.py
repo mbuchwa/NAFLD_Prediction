@@ -112,12 +112,12 @@ def plot_combined_roc_curve(y_true, y_pred_ensemble, model_name='xgb', prospecti
     auc_list = []
 
     # convert to array
-    y_true = np.array(y_true)
-    y_pred_ensemble = np.array(y_pred_ensemble)
+    # y_true = np.array(y_true)
+    # y_pred_ensemble = np.array(y_pred_ensemble)
 
     # Compute ROC curve and AUC for each model
-    for i in range(y_pred_ensemble.shape[0]):  # Assuming y_pred_ensemble has shape (n_datasets, n_samples, 2)
-        fpr, tpr, _ = roc_curve(y_true[i], y_pred_ensemble[i, :, 1], pos_label=1)
+    for i in range(len(y_pred_ensemble)):  # Assuming y_pred_ensemble has shape (n_datasets, n_samples, 2)
+        fpr, tpr, _ = roc_curve(np.array(y_true[i]), np.array(y_pred_ensemble[i])[:, 1], pos_label=1)
         auc_val = auc(fpr, tpr)
         fpr_list.append(fpr)
         tpr_list.append(tpr)

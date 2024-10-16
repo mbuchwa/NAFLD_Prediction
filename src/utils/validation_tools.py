@@ -9,25 +9,25 @@ from sklearn.model_selection import StratifiedKFold
 def evaluate_performance(models, xs_test, ys_test, df_cols, model_name, classification_type, prospective):
     # Ensemble Prediction
     if any(substring in model_name for substring in ['svm', 'rf', 'xgb', 'light_gbm']):
-        ensemble_reports, ensemble_cms, ensemble_preds, ensemble_probas, ensemble_pred_probas = \
+        ensemble_reports, ensemble_cms, ensemble_preds, ensemble_probas, ensemble_pred_probas, y_skf_test = \
             make_ensemble_preds(xs_test, ys_test, models)
     elif 'ffn' in model_name:
-        ensemble_reports, ensemble_cms, ensemble_preds, ensemble_probas, ensemble_pred_probas = \
+        ensemble_reports, ensemble_cms, ensemble_preds, ensemble_probas, ensemble_pred_probas, y_skf_test = \
             make_ensemble_preds_pytorch(xs_test, ys_test, models)
     elif 'gandalf' in model_name:
-        ensemble_reports, ensemble_cms, ensemble_preds, ensemble_probas, ensemble_pred_probas = \
+        ensemble_reports, ensemble_cms, ensemble_preds, ensemble_probas, ensemble_pred_probas, y_skf_test = \
             make_ensemble_preds_gandalf(xs_test, ys_test, df_cols, models)
     elif 'tab_transformer' in model_name:
-        ensemble_reports, ensemble_cms, ensemble_preds, ensemble_probas, ensemble_pred_probas = \
+        ensemble_reports, ensemble_cms, ensemble_preds, ensemble_probas, ensemble_pred_probas, y_skf_test = \
             make_ensemble_preds_tab_transformer(xs_test, ys_test, models)
     elif 'vi_bnn' in model_name:
-        ensemble_reports, ensemble_cms, ensemble_preds, ensemble_probas, ensemble_pred_probas = \
+        ensemble_reports, ensemble_cms, ensemble_preds, ensemble_probas, ensemble_pred_probas, y_skf_test = \
             make_ensemble_preds_vi_bnn(xs_test, ys_test, models)
 
     plot_accuracies(ensemble_reports, 'Ensemble', name=f'{model_name}', prospective=prospective,
                     classification_type=classification_type)
 
-    plot_combined_roc_curve(ys_test, ensemble_pred_probas, f'{model_name}', prospective=prospective,
+    plot_combined_roc_curve(y_skf_test, ensemble_pred_probas, f'{model_name}', prospective=prospective,
                             classification_type=classification_type)  # Plot combined ROC and show AUC
 
     plot_cm(ensemble_cms[0], name=f'{model_name}', prospective=prospective, classification_type=classification_type)
@@ -298,6 +298,7 @@ def make_ensemble_preds_pytorch(xs_test, ys_test, models, intra_model_preds=Fals
 
     # Take first imputed dataset
     X_all, y_all = xs_test[0], ys_test[0]
+    y_skf_test = []
 
     skf = StratifiedKFold(n_splits=5)
 
@@ -306,6 +307,7 @@ def make_ensemble_preds_pytorch(xs_test, ys_test, models, intra_model_preds=Fals
     for split_index, _ in skf.split(X_all, y_all):
         X = X_all[split_index]
         y = y_all[split_index]
+        y_skf_test.append(y)
 
         y_preds = []
         y_preds_all = []
@@ -351,13 +353,13 @@ def make_ensemble_preds_pytorch(xs_test, ys_test, models, intra_model_preds=Fals
         """get ensemble_preds_probas on stratisfied preds for ROC curve and test"""
         # Take majority vote or soft voting
         ensemble_pred = majority_vote(y_preds, rule='soft')
+        ensemble_pred_probas.append(ensemble_pred)
         ensemble_pred, probas = get_index_and_proba(ensemble_pred)
         # Convert predicted labels to numpy array
         ensemble_pred = np.array(ensemble_pred)
 
-        """get ensemble_preds_probas and ensemble_preds on all preds for ROC curve and test"""
+        """get ensemble_preds on all preds for test"""
         ensemble_pred_all_probas = majority_vote(y_preds_all, rule='soft')
-        ensemble_pred_probas.append(ensemble_pred_all_probas)
         ensemble_pred_all, probas_all = get_index_and_proba(ensemble_pred_all_probas)
         # Convert predicted labels to numpy array
         ensemble_pred_all = np.array(ensemble_pred_all)
@@ -371,7 +373,7 @@ def make_ensemble_preds_pytorch(xs_test, ys_test, models, intra_model_preds=Fals
         ensemble_preds.append(ensemble_pred_all)
         ensemble_probas.append(probas_all)
 
-    return ensemble_reports, ensemble_cms, ensemble_preds, ensemble_probas, ensemble_pred_probas
+    return ensemble_reports, ensemble_cms, ensemble_preds, ensemble_probas, ensemble_pred_probas, y_skf_test
 
 
 def make_ensemble_preds_gandalf(xs_test, ys_test, df_cols, models, classification_type='fibrosis', intra_model_preds=False):
@@ -401,6 +403,7 @@ def make_ensemble_preds_gandalf(xs_test, ys_test, df_cols, models, classificatio
 
     # Take first imputed dataset
     X_all, y_all = xs_test[0], ys_test[0]
+    y_skf_test = []
 
     skf = StratifiedKFold(n_splits=5)
 
@@ -409,6 +412,7 @@ def make_ensemble_preds_gandalf(xs_test, ys_test, df_cols, models, classificatio
     for split_index, _ in skf.split(X_all, y_all):
         X = X_all[split_index]
         y = y_all[split_index]
+        y_skf_test.append(y)
 
         test_data_all = pd.DataFrame(data=X_all, columns=df_cols)
         test_data_all['target'] = y_all
@@ -477,7 +481,7 @@ def make_ensemble_preds_gandalf(xs_test, ys_test, df_cols, models, classificatio
         ensemble_preds.append(ensemble_pred_all)
         ensemble_probas.append(probas_all)
 
-    return ensemble_reports, ensemble_cms, ensemble_preds, ensemble_probas, ensemble_pred_probas
+    return ensemble_reports, ensemble_cms, ensemble_preds, ensemble_probas, ensemble_pred_probas, y_skf_test
 
 
 def make_ensemble_preds_vi_bnn(xs_test, ys_test, models, intra_model_preds=False):
@@ -505,6 +509,7 @@ def make_ensemble_preds_vi_bnn(xs_test, ys_test, models, intra_model_preds=False
 
     # Take first imputed dataset
     X_all, y_all = xs_test[0], ys_test[0]
+    y_skf_test = []
 
     skf = StratifiedKFold(n_splits=5)
 
@@ -513,6 +518,7 @@ def make_ensemble_preds_vi_bnn(xs_test, ys_test, models, intra_model_preds=False
     for split_index, _ in skf.split(X_all, y_all):
         X = X_all[split_index]
         y = y_all[split_index]
+        y_skf_test.append(y)
 
         y_preds = []
         y_preds_all = []
@@ -558,13 +564,13 @@ def make_ensemble_preds_vi_bnn(xs_test, ys_test, models, intra_model_preds=False
         """get ensemble_preds_probas on stratisfied preds for ROC curve and test"""
         # Take majority vote or soft voting
         ensemble_pred = majority_vote(y_preds, rule='soft')
+        ensemble_pred_probas.append(ensemble_pred)
         ensemble_pred, probas = get_index_and_proba(ensemble_pred)
         # Convert predicted labels to numpy array
         ensemble_pred = np.array(ensemble_pred)
 
-        """get ensemble_preds_probas and ensemble_preds on all preds for ROC curve and test"""
+        """get ensemble_preds on all preds for test"""
         ensemble_pred_all_probas = majority_vote(y_preds_all, rule='soft')
-        ensemble_pred_probas.append(ensemble_pred_all_probas)
         ensemble_pred_all, probas_all = get_index_and_proba(ensemble_pred_all_probas)
         # Convert predicted labels to numpy array
         ensemble_pred_all = np.array(ensemble_pred_all)
@@ -578,7 +584,7 @@ def make_ensemble_preds_vi_bnn(xs_test, ys_test, models, intra_model_preds=False
         ensemble_preds.append(ensemble_pred_all)
         ensemble_probas.append(probas_all)
 
-    return ensemble_reports, ensemble_cms, ensemble_preds, ensemble_probas, ensemble_pred_probas
+    return ensemble_reports, ensemble_cms, ensemble_preds, ensemble_probas, ensemble_pred_probas, y_skf_test
 
 
 def load_pytorch_model(checkpoint_file, classification_type, model_name, df_cols=None):
@@ -811,6 +817,7 @@ def make_ensemble_preds_tab_transformer(xs_test, ys_test, models, intra_model_pr
 
     # Take first imputed dataset
     X_all, y_all = xs_test[0], ys_test[0]
+    y_skf_test = []
 
     skf = StratifiedKFold(n_splits=5)
 
@@ -819,6 +826,7 @@ def make_ensemble_preds_tab_transformer(xs_test, ys_test, models, intra_model_pr
     for split_index, _ in skf.split(X_all, y_all):
         X = X_all[split_index]
         y = y_all[split_index]
+        y_skf_test.append(y)
 
         y_preds = []
         y_preds_all = []
@@ -857,13 +865,13 @@ def make_ensemble_preds_tab_transformer(xs_test, ys_test, models, intra_model_pr
         """get ensemble_preds_probas on stratisfied preds for ROC curve and test"""
         # Take majority vote or soft voting
         ensemble_pred = majority_vote(y_preds, rule='soft')
+        ensemble_pred_probas.append(ensemble_pred)
         ensemble_pred, probas = get_index_and_proba(ensemble_pred)
         # Convert predicted labels to numpy array
         ensemble_pred = np.array(ensemble_pred)
 
-        """get ensemble_preds_probas and ensemble_preds on all preds for ROC curve and test"""
+        """get ensemble_preds on all preds for test"""
         ensemble_pred_all_probas = majority_vote(y_preds_all, rule='soft')
-        ensemble_pred_probas.append(ensemble_pred_all_probas)
         ensemble_pred_all, probas_all = get_index_and_proba(ensemble_pred_all_probas)
         # Convert predicted labels to numpy array
         ensemble_pred_all = np.array(ensemble_pred_all)
@@ -877,4 +885,4 @@ def make_ensemble_preds_tab_transformer(xs_test, ys_test, models, intra_model_pr
         ensemble_preds.append(ensemble_pred_all)
         ensemble_probas.append(probas_all)
 
-    return ensemble_reports, ensemble_cms, ensemble_preds, ensemble_probas, ensemble_pred_probas
+    return ensemble_reports, ensemble_cms, ensemble_preds, ensemble_probas, ensemble_pred_probas, y_skf_test
