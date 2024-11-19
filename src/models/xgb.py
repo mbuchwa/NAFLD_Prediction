@@ -80,7 +80,7 @@ def evaluate_ensemble_xgboost(xs_test, ys_test, xs_pro, ys_pro, df_cols, classif
 
 
 def finetune_ensemble_xgb(xs_finetune, ys_finetune, xs_val, ys_val, xs_test, ys_test, xs_umm, ys_umm, df_cols,
-                          classification_type, shap_selected, interpret_model=True, testing=True):
+                          classification_type, shap_selected, interpret_model=False, testing=True):
     """
     Fine-tunes a saved XGBoost model on new data.
 
@@ -109,13 +109,14 @@ def finetune_ensemble_xgb(xs_finetune, ys_finetune, xs_val, ys_val, xs_test, ys_
     # Fine-tune models
     for idx, (model, X_finetune, y_finetune, X_val, y_val) in enumerate(zip(models, xs_finetune, ys_finetune, xs_val, ys_val)):
         print(f'Fine-tuning model {idx}')
-        model.fit(X_finetune, y_finetune, eval_set=[(X_val, y_val)], early_stopping_rounds=10, verbose=True)
+        model.fit(X_finetune, y_finetune, eval_set=[(X_val, y_val)], early_stopping_rounds=10, verbose=True,
+                  xgb_model=model)
         models[idx] = model
 
     # Save fine-tuned models
     finetuned_model_dir = f'./models/{model_name}_finetuned/'
     os.makedirs(finetuned_model_dir, exist_ok=True)
-    finetuned_model_path = f'{finetuned_model_dir}/model_{classification_type}.pickle'
+    finetuned_model_path = f'{finetuned_model_dir}/model_{classification_type}_finetuned.pickle'
 
     with open(finetuned_model_path, "wb") as f:
         pickle.dump(models, f)

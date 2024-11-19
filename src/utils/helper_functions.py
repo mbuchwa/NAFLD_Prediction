@@ -99,17 +99,14 @@ def make_ensemble_preds(xs_test, ys_test, models, intra_model_preds=False):
 
     # Take first imputed dataset
     X_all, y_all = xs_test[0], ys_test[0]
-    y_skf_test = []
 
     skf = StratifiedKFold(n_splits=5)
 
     # Perform cross-validation
     # Use for stratified_split the train_index (length is 80% of all samples) to calculate the CMs
-    for i, (split_index, _) in enumerate(skf.split(X_all, y_all)):
+    for split_index, _ in skf.split(X_all, y_all):
         X = X_all[split_index]
         y = y_all[split_index]
-
-        y_skf_test.append(y)
 
         y_preds = []
         y_preds_all = []
@@ -145,13 +142,13 @@ def make_ensemble_preds(xs_test, ys_test, models, intra_model_preds=False):
         """get ensemble_preds_probas on stratisfied preds for ROC curve and test"""
         # Take majority vote or soft voting
         ensemble_pred = majority_vote(y_preds, rule='soft')
-        ensemble_pred_probas.append(ensemble_pred)
         ensemble_pred, probas = get_index_and_proba(ensemble_pred)
         # Convert predicted labels to numpy array
         ensemble_pred = np.array(ensemble_pred)
 
-        """get ensemble_preds on all preds for test"""
+        """get ensemble_preds_probas and ensemble_preds on all preds for ROC curve and test"""
         ensemble_pred_all_probas = majority_vote(y_preds_all, rule='soft')
+        ensemble_pred_probas.append(ensemble_pred_all_probas)
         ensemble_pred_all, probas_all = get_index_and_proba(ensemble_pred_all_probas)
         # Convert predicted labels to numpy array
         ensemble_pred_all = np.array(ensemble_pred_all)
@@ -165,7 +162,7 @@ def make_ensemble_preds(xs_test, ys_test, models, intra_model_preds=False):
         ensemble_preds.append(ensemble_pred_all)
         ensemble_probas.append(probas_all)
 
-    return ensemble_reports, ensemble_cms, ensemble_preds, ensemble_probas, ensemble_pred_probas, y_skf_test
+    return ensemble_reports, ensemble_cms, ensemble_preds, ensemble_probas, ensemble_pred_probas
 
 
 def get_device(i=0):

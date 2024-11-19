@@ -9,6 +9,8 @@ from src.models.rf import evaluate_ensemble_rf
 from src.models.gandalf import evaluate_ensemble_gandalf
 from src.models.vi_bnn import evaluate_ensemble_vi_bnn
 from src.models.light_gmb import evaluate_ensemble_light_gbm
+from src.utils.ger_eng_dict import dict_germ_eng
+from src.utils.smote import apply_smote_to_datasets
 warnings.filterwarnings('ignore')
 
 
@@ -56,6 +58,7 @@ if __name__ == '__main__':
     shap_selected = False
     scaling = False
     select_patients = False
+    smote = False
 
     assert model_name in ['svm', 'rf', 'xgb', 'light_gbm', 'ffn', 'gandalf', 'tab_transformer', 'mcmc_bnn', 'vi_bnn']
     assert classification_type in ['cirrhosis', 'fibrosis', 'three_stage', 'two_stage']
@@ -64,35 +67,12 @@ if __name__ == '__main__':
         scaling = True
 
     _, _, _, _, xs_test, ys_test, xs_pro, ys_pro, df_cols = preprare_data(classification_type, shap_selected, scaling,
-                                                                          select_patients=select_patients)
+                                                                          select_patients=select_patients, smote=smote)
 
-
-    # Dictionary translating german into englisch
-    dict_germ_eng = {
-        'Thrombozyten (Mrd/l)': 'Platelets (Billion/l)',
-        'MCV (fl)': 'MCV (fl)',
-        'Quick (%)': 'Quick (%)',
-        'INR': 'INR',
-        'Leukozyten (Mrd/l)': 'Leukocytes (Billion/l)',
-        'ASAT (U/I)': 'ASAT (U/l)',
-        'PTT (sek)': 'PTT (sec)',
-        'ALAT (U/I)': 'ALAT (U/l)',
-        'Age': 'Age',
-        'IgG (g/l)': 'IgG (g/l)',
-        'Albumin (g/l)': 'Albumin (g/l)',
-        'HbA1c (%)': 'HbA1c (%)',
-        'Bilrubin gesamt (mg/dl)': 'Total Bilirubin (mg/dl)',
-        'AP (U/I)': 'AP (U/l)',
-        'Harnstoff': 'Urea',
-        'Hb (g/dl)': 'Hb (g/dl)',
-        'Kalium': 'Potassium',
-        'GGT (U/I)': 'GGT (U/l)',
-        'Kreatinin (mg/dl)': 'Creatinine (mg/dl)',
-        'GRF (berechnet) (ml/min)': 'GFR (calculated) (ml/min)'
-    }
+    if smote:
+        xs_pro, ys_pro = apply_smote_to_datasets(xs_pro, ys_pro)
 
     df_cols = [dict_germ_eng[biomarker] for biomarker in df_cols]
-
 
     print(f'\n ----- Testing model {model_name} | Task {classification_type} ----- \n')
     print('-------------------------------------------')

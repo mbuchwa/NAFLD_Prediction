@@ -4,12 +4,10 @@ from sklearn.impute import IterativeImputer
 import pandas as pd
 from sklearn.metrics import classification_report, confusion_matrix
 import pickle
-from select_test_datasets import *
+from src.select_test_datasets import *
 from sklearn.model_selection import StratifiedKFold
-
-
-
-from utils.plots import *
+from src.utils.plots import *
+from src.utils.smote import apply_smote_to_datasets
 
 pd.options.mode.chained_assignment = None
 
@@ -36,7 +34,7 @@ def create_scores(df_pro):
     return df_pro
 
 
-def preprare_data(classification_type, shap_selected, scaling, finetune=False, select_patients=False):
+def preprare_data(classification_type, shap_selected, scaling, finetune=False, select_patients=False, smote=False):
     # Load data
     if finetune:
         df = pd.read_excel('../data/20240813-FibrosisDB(302_Patients).xlsx')
@@ -111,7 +109,7 @@ def preprare_data(classification_type, shap_selected, scaling, finetune=False, s
 
         xs_pro, ys_pro, df_cols, scaler = preprocess(df_pro, 'prospective', classification_type=classification_type,
                                                      scaling=scaling, scaler=scaler, shap_selected=shap_selected,
-                                                     select_closest_patients_from_mainz=select_patients)
+                                                    select_closest_patients_from_mainz=select_patients, smote=smote)
 
     # concat all data files to one processed_data csv
     merged_no_mice_df = pd.concat([pd.read_csv(f'../data/preprocessed_no_mice_train/train_{classification_type}.csv'),
@@ -176,7 +174,7 @@ def preprare_data(classification_type, shap_selected, scaling, finetune=False, s
 
 
 def preprocess(df, data_type='train', classification_type='fibrosis', scaling=False, scaler=None,
-               shap_selected=False, select_closest_patients_from_mainz=False):
+               shap_selected=False, select_closest_patients_from_mainz=False, smote=False):
     """
     Main function for preprocessing. Preprocesses the data.
     Args:
@@ -188,6 +186,7 @@ def preprocess(df, data_type='train', classification_type='fibrosis', scaling=Fa
         shap_selected (bool): whether to select top-n shap biomarkers for testing validation decrease compared
         to all biomarkers as input
         select_closest_patients_from_mainz: whether to select closest patients
+        smote: if smote is used for minority upsampling
 
     Returns:
         xs (list): m dataframes.
@@ -263,6 +262,26 @@ def preprocess(df, data_type='train', classification_type='fibrosis', scaling=Fa
 
     dfs = mice(df, 10)
 
+    # TODO: refactor preprocessing and smote implementation
+    if data_type == 'prospective' and smote:
+        dfs_, x_list, y_list = [], [], []
+        for idx, df in enumerate(dfs):
+            x = df.drop(columns=['Micro']).to_numpy()
+            y = df['Micro'].to_numpy()
+            x_list.append(x)
+            y_list.append(y.astype(int))
+
+        # Apply SMOTE
+        x_list, y_list = apply_smote_to_datasets(x_list, y_list)
+
+        for idx, df in enumerate(dfs):
+            # Convert back to DataFrame
+            df_smote = pd.DataFrame(x_list[idx], columns=df.drop(
+                columns=['Micro']).columns)  # Set original column names for features
+            df_smote['Micro'] = y_list[idx]  # Add the target column back
+            dfs_.append(df_smote)
+        dfs = dfs_
+
     ys = []
     xs = []
 
@@ -293,12 +312,13 @@ def preprocess(df, data_type='train', classification_type='fibrosis', scaling=Fa
             xs.append(x)
 
         ys.append(y)
+
         df = calculate_fib4(df, classification_type)
         df.to_csv(f'../data/preprocessed_mice_fib_{data_type}/{data_type}_{classification_type}_{idx}.csv', index=False)
 
     if any(substring in data_type for substring in ['test', 'prospective']):
         analyze_fib4(dfs, classification_type=classification_type, data_type=data_type,
-                     select_patients_from_mainz=select_closest_patients_from_mainz)
+                     select_patients_from_mainz=select_closest_patients_from_mainz, smote=smote)
 
     cols = [*xs[0].columns]
 
@@ -311,7 +331,7 @@ def preprocess(df, data_type='train', classification_type='fibrosis', scaling=Fa
 
 
 def analyze_fib4(dfs, classification_type='fibrosis', data_type='train', select_patients_from_mainz=False,
-                 subgroup_analysis=True):
+                 subgroup_analysis=True, smote=False):
     """
     Computes the FIB4 classification performances on the data sets.
     Args:

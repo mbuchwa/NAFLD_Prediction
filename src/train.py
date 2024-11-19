@@ -44,7 +44,7 @@ def hypertrain(xs_train, ys_train, xs_val, ys_val, xs_test, ys_test, xs_pro, ys_
         hypertrain_ensemble_vi_bnn(xs_train, ys_train, xs_val, ys_val, xs_test, ys_test, xs_pro, ys_pro, df_cols, classification_type,
                                    shap_selected)
 
-    # Hypertrain Feed Forward Neural Networkf
+    # Hypertrain Feed Forward Neural Network
     elif model_name == 'ffn':
         hypertrain_ensemble_ffn(xs_train, ys_train, xs_val, ys_val, xs_test, ys_test, xs_pro, ys_pro, df_cols, classification_type,
                                 shap_selected)
@@ -65,9 +65,9 @@ def hypertrain(xs_train, ys_train, xs_val, ys_val, xs_test, ys_test, xs_pro, ys_
 
 
 if __name__ == '__main__':
-    model_name = 'rf'
-    classification_type = 'cirrhosis'
-    shap_selected = False
+    model_name = 'light_gbm'
+    classification_type = 'three_stage'
+    shap_selected = True
     scaling = False
 
     assert model_name in ['svm', 'rf', 'xgb', 'light_gbm', 'ffn', 'gandalf', 'tab_transformer', 'mcmc_bnn', 'vi_bnn']
@@ -77,32 +77,6 @@ if __name__ == '__main__':
         scaling = True
 
     xs_train, ys_train, xs_val, ys_val, xs_test, ys_test, xs_pro, ys_pro, df_cols = preprare_data(classification_type, shap_selected, scaling)
-
-    # Dictionary translating german into englisch
-    dict_germ_eng = {
-        'Thrombozyten (Mrd/l)': 'Platelets (Billion/l)',
-        'MCV (fl)': 'MCV (fl)',
-        'Quick (%)': 'Quick (%)',
-        'INR': 'INR',
-        'Leukozyten (Mrd/l)': 'Leukocytes (Billion/l)',
-        'ASAT (U/I)': 'ASAT (U/l)',
-        'PTT (sek)': 'PTT (sec)',
-        'ALAT (U/I)': 'ALAT (U/l)',
-        'Age': 'Age',
-        'IgG (g/l)': 'IgG (g/l)',
-        'Albumin (g/l)': 'Albumin (g/l)',
-        'HbA1c (%)': 'HbA1c (%)',
-        'Bilrubin gesamt (mg/dl)': 'Total Bilirubin (mg/dl)',
-        'AP (U/I)': 'AP (U/l)',
-        'Harnstoff': 'Urea',
-        'Hb (g/dl)': 'Hb (g/dl)',
-        'Kalium': 'Potassium',
-        'GGT (U/I)': 'GGT (U/l)',
-        'Kreatinin (mg/dl)': 'Creatinine (mg/dl)',
-        'GRF (berechnet) (ml/min)': 'GFR (calculated) (ml/min)'
-    }
-
-    df_cols = [dict_germ_eng[biomarker] for biomarker in df_cols]
 
     print(f'\n ----- Hypertraining model {model_name} | Task {classification_type} ----- \n')
     print('-------------------------------------------')

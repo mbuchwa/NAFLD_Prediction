@@ -1,8 +1,9 @@
 from src.utils.helper_functions import *
 from src.utils.validation_tools import evaluate_performance, interpret
+from src.utils.logistic_regression import logistic_regression_analysis
 from sklearn.model_selection import RandomizedSearchCV
-import shap
 import lightgbm as lgb
+import shap
 import te2rules
 from te2rules.explainer import ModelExplainer
 
@@ -17,9 +18,9 @@ def hypertrain_ensemble_light_gbm(xs_train, ys_train, xs_val, ys_val, xs_test, y
     os.makedirs(f'./outputs/{model_name}', exist_ok=True)
 
     # Train models
-    for idx, (X_train, y_train, X_val, y_val) in enumerate(zip(xs_train, ys_train, xs_val, ys_val)):
+    for idx, (X_train, y_train, X_val, y_val, X_test, y_test, X_pro, y_pro) in enumerate(zip(xs_train, ys_train, xs_val, ys_val, xs_test, ys_test, xs_pro, ys_pro)):
         print(f'Training model {idx}')
-        models.append(hypertrain_light_gbm_model(X_train, y_train, X_val, y_val, classification_type=classification_type, index=idx))
+        models.append(hypertrain_light_gbm_model(X_train, y_train, X_val, y_val, X_test, y_test, X_pro, y_pro, df_cols, classification_type=classification_type))
 
     # Save models
     model_path = f'models/{model_name}/model_{classification_type}.pickle'
@@ -98,9 +99,9 @@ def finetune_ensemble_light_gbm(xs_finetune, ys_finetune, xs_val, ys_val, xs_tes
     for idx, (model, X_finetune, y_finetune, X_val, y_val) in enumerate(
             zip(models, xs_finetune, ys_finetune, xs_val, ys_val)):
         print(f'Fine-tuning model {idx}')
-        lgb.LGBMClassifier().fit(X_finetune, y_finetune, eval_set=[(X_val, y_val)],
-                  eval_metric='multi_logloss' if classification_type == 'three_stage' else 'logloss',
-                  callbacks=[lgb.early_stopping(stopping_rounds=10)])
+        # model.fit(X_finetune, y_finetune, eval_set=[(X_val, y_val)],
+        #           eval_metric='multi_logloss' if classification_type == 'three_stage' else 'rmse',
+        #           init_model=model)
         models[idx] = model
 
     print('------ Finished Fine-Tuning Ensemble ------')
@@ -243,7 +244,8 @@ def finetune_ensemble_light_gbm(xs_finetune, ys_finetune, xs_val, ys_val, xs_tes
 #     return np.array(indices)
 
 
-def hypertrain_light_gbm_model(x_train, y_train, x_val, y_val, classification_type='fibrosis', index=0):
+def hypertrain_light_gbm_model(x_train, y_train, x_val, y_val, x_umm_test=None, y_umm_test=None, x_mainz_test=None, 
+                               y_mainz_test=None, df_cols=None, classification_type='fibrosis'):
     """
     Trains a model on the provided features (x_train) and labels (y_train) with early stopping based on validation loss.
 
@@ -257,49 +259,12 @@ def hypertrain_light_gbm_model(x_train, y_train, x_val, y_val, classification_ty
     Returns:
         sklearn model: The trained model.
     """
-    # # ---------------------------------------------------------
-    # from sklearn.linear_model import LogisticRegression
-    # from sklearn.metrics import accuracy_score, f1_score, confusion_matrix
-    #
-    # model = LogisticRegression()
-    # model.fit(x_train, y_train)
-    #
-    # # Extract coefficients and intercept
-    # coefficients = model.coef_[0]
-    # intercept = model.intercept_[0]
-    #
-    # # Map coefficients to feature names
-    # feature_names = ['Thrombozyten (Mrd/l)', 'MCV (fl)', 'INR']
-    # coef_dict = dict(zip(feature_names, coefficients))
-    #
-    # # Print the logistic regression equation
-    # print("Logistic Regression Equation:")
-    # print(
-    #     f"log-odds = {intercept:.4f} + ({coef_dict[feature_names[0]]:.4f} * Thrombozyten (Mrd/l)) + ({coef_dict[feature_names[1]]:.4f} * MCV (fl)) + ({coef_dict[feature_names[2]]:.4f} * INR)")
-    #
-    # # To get the probability, use the sigmoid function
-    # print("\nProbability of positive class (P):")
-    # print("P = 1 / (1 + exp(-log-odds))")
-    #
-    # # Make predictions on the validation set
-    # y_val_pred_proba = model.predict_proba(x_val)[:, 1]  # Probabilities for the positive class
-    # y_val_pred = (y_val_pred_proba >= 0.5).astype(int)  # Convert probabilities to binary prediction
-    #
-    # # Calculate metrics
-    # accuracy = accuracy_score(y_val, y_val_pred)
-    # f1 = f1_score(y_val, y_val_pred)
-    # tn, fp, fn, tp = confusion_matrix(y_val, y_val_pred).ravel()
-    # ppv = tp / (tp + fp)  # Positive Predictive Value (Precision)
-    # tpr = tp / (tp + fn)  # True Positive Rate (Recall)
-    #
-    # # Print metrics
-    # print('------ Classification Metrics Regression -------')
-    # print(f"Accuracy: {accuracy:.4f}")
-    # print(f"F1 Score: {f1:.4f}")
-    # print(f"Positive Predictive Value (PPV): {ppv:.4f}")
-    # print(f"True Positive Rate (TPR): {tpr:.4f}")
-    #
-    # # ---------------------------------------------------------
+    ##############################################
+    """Logistic regression for comparison"""
+    logistic_regression_analysis(x_train, y_train, x_umm_test, y_umm_test, df_cols, "UMM")
+    logistic_regression_analysis(x_train, y_train, x_mainz_test, y_mainz_test, df_cols, "MAINZ")
+    ##############################################
+
 
     grid_params = {
         'max_depth': np.arange(1, 40),

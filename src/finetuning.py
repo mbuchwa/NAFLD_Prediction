@@ -31,7 +31,7 @@ def finetuning(xs_train, ys_train, xs_val, ys_val, xs_test, ys_test, xs_test_umm
 
 
 if __name__ == '__main__':
-    model_name = 'xgb'
+    model_name = 'light_gbm'
     classification_type = 'cirrhosis'
     shap_selected = False
     scaling = False
