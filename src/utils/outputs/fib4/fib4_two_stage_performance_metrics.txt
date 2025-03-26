@@ -1,0 +1,6 @@
+
+FIB4
+Average ACC: 84.51 | Std ACC: 0.88,
+Average F1: 82.69 | Std F1: 0.87,
+Average PPV: 81.63 | Std PPV: 0.88,
+Average TPR: 84.66 | Std TPR: 0.69
