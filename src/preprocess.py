@@ -11,7 +11,6 @@ import pickle
 from src.select_test_datasets import *
 from sklearn.model_selection import StratifiedKFold
 from src.utils.plots import *
-from src.utils.smote import apply_smote_to_datasets
 
 pd.options.mode.chained_assignment = None
 
@@ -380,25 +379,11 @@ def preprocess(df, data_type='train', classification_type='fibrosis', scaling=Fa
 
     dfs = mice(df, 10)
 
-    # TODO: refactor preprocessing and smote implementation
     if data_type == 'prospective' and smote:
-        dfs_, x_list, y_list = [], [], []
-        for idx, df in enumerate(dfs):
-            x = df.drop(columns=['Micro']).to_numpy()
-            y = df['Micro'].to_numpy()
-            x_list.append(x)
-            y_list.append(y.astype(int))
-
-        # Apply SMOTE
-        x_list, y_list = apply_smote_to_datasets(x_list, y_list)
-
-        for idx, df in enumerate(dfs):
-            # Convert back to DataFrame
-            df_smote = pd.DataFrame(x_list[idx], columns=df.drop(
-                columns=['Micro']).columns)  # Set original column names for features
-            df_smote['Micro'] = y_list[idx]  # Add the target column back
-            dfs_.append(df_smote)
-        dfs = dfs_
+        raise ValueError(
+            "SMOTE is not supported for external/prospective data. "
+            "Disable `smote` when preprocessing or testing with external cohorts."
+        )
 
     ys = []
     xs = []

@@ -1,4 +1,9 @@
 import warnings
+from pathlib import Path
+
+import numpy as np
+import os
+import pandas as pd
 from utils.helper_functions import *
 from preprocess import preprare_data
 from src.models.tab_transformer import evaluate_ensemble_tab_transformer
@@ -10,7 +15,6 @@ from src.models.gandalf import evaluate_ensemble_gandalf
 from src.models.vi_bnn import evaluate_ensemble_vi_bnn
 from src.models.light_gmb import evaluate_ensemble_light_gbm
 from src.utils.ger_eng_dict import dict_germ_eng
-from src.utils.smote import apply_smote_to_datasets
 warnings.filterwarnings('ignore')
 
 
@@ -53,6 +57,39 @@ def testing(xs_test, ys_test, xs_pro, ys_pro, df_cols, classification_type, mode
         evaluate_ensemble_gandalf(xs_test, ys_test, xs_pro, ys_pro, df_cols, classification_type, shap_selected)
 
 
+def export_external_class_prevalence(ys_external, output_path='outputs/external/class_prevalence.csv'):
+    """
+    Export prevalence summary for external labels:
+    - class 0: F0-F1
+    - class 1: F2-F4
+    """
+    if isinstance(ys_external, list):
+        if len(ys_external) == 0:
+            raise ValueError("Cannot report prevalence for external labels: `ys_external` is empty.")
+        labels = np.asarray(ys_external[0]).reshape(-1)
+    else:
+        labels = np.asarray(ys_external).reshape(-1)
+
+    total = labels.size
+    if total == 0:
+        raise ValueError("Cannot report prevalence for external labels: no samples available.")
+
+    class_0_count = int(np.sum(labels == 0))
+    class_1_count = int(np.sum(labels == 1))
+    prevalence_df = pd.DataFrame(
+        [
+            {'class_group': 'F0-F1', 'label': 0, 'count': class_0_count, 'prevalence_percent': (class_0_count / total) * 100},
+            {'class_group': 'F2-F4', 'label': 1, 'count': class_1_count, 'prevalence_percent': (class_1_count / total) * 100},
+        ]
+    )
+
+    output_file = Path(output_path)
+    output_file.parent.mkdir(parents=True, exist_ok=True)
+    prevalence_df.to_csv(output_file, index=False)
+    print(f'External class prevalence exported to {output_file.resolve()}')
+    print(prevalence_df)
+
+
 if __name__ == '__main__':
     model_name = 'light_gbm'
     classification_type = 'fibrosis'
@@ -67,11 +104,16 @@ if __name__ == '__main__':
     if model_name == 'vi_bnn':
         scaling = True
 
+    if smote:
+        raise ValueError(
+            "SMOTE cannot be enabled for external/prospective data in this evaluation pipeline. "
+            "Set `smote = False` in src/test.py."
+        )
+
     _, _, _, _, xs_test, ys_test, xs_pro, ys_pro, df_cols = preprare_data(classification_type, shap_selected, scaling,
                                                                           select_patients=select_patients, smote=smote)
 
-    if smote:
-        xs_pro, ys_pro = apply_smote_to_datasets(xs_pro, ys_pro)
+    export_external_class_prevalence(ys_pro, output_path='outputs/external/class_prevalence.csv')
 
     df_cols = [dict_germ_eng[biomarker] for biomarker in df_cols]
 
