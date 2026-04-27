@@ -7,7 +7,11 @@ import json
 from sklearn.metrics import brier_score_loss
 from sklearn.calibration import calibration_curve
 from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import roc_auc_score
+from sklearn.metrics import roc_auc_score, cohen_kappa_score, mean_absolute_error
+
+
+CLINICAL_UTILITY_DIR = 'outputs/clinical_utility'
+MIN_SUBGROUP_SIZE_FOR_STABLE_ESTIMATE = 30
 
 
 def _compute_external_calibration_stats(y_true, y_pred_proba):
@@ -217,6 +221,73 @@ def _get_eval_output_dir(model_name, prospective):
     return f'outputs/{model_name}/prospective' if prospective else f'outputs/{model_name}'
 
 
+def _extract_fib4_scores_from_features(x_matrix, df_cols):
+    """
+    Compute continuous FIB-4 scores from feature matrix when required biomarkers are available.
+    Expected columns are the English feature names used after translation in src/test.py.
+    """
+    required_cols = ['Age', 'ASAT (U/l)', 'ALAT (U/l)', 'Platelets (Billion/l)']
+    if not all(col in df_cols for col in required_cols):
+        return None
+
+    features_df = pd.DataFrame(x_matrix, columns=df_cols)
+    denominator = features_df['Platelets (Billion/l)'] * np.sqrt(np.clip(features_df['ALAT (U/l)'], 1e-6, None))
+    fib4_scores = (features_df['Age'] * features_df['ASAT (U/l)']) / np.clip(denominator, 1e-6, None)
+    return fib4_scores.to_numpy(dtype=float)
+
+
+def _to_unit_interval(scores):
+    scores = np.asarray(scores, dtype=float)
+    if scores.size == 0:
+        return scores
+    lo, hi = np.nanmin(scores), np.nanmax(scores)
+    if not np.isfinite(lo) or not np.isfinite(hi) or hi <= lo:
+        return np.full(scores.shape, 0.5, dtype=float)
+    return (scores - lo) / (hi - lo)
+
+
+def _decision_curve_net_benefit(y_true, risk_scores, thresholds):
+    y_true = np.asarray(y_true).astype(int)
+    risk_scores = np.asarray(risk_scores, dtype=float)
+    n = y_true.shape[0]
+    out = []
+    for thr in thresholds:
+        if thr <= 0 or thr >= 1:
+            continue
+        y_pred = risk_scores >= thr
+        tp = np.sum((y_pred == 1) & (y_true == 1))
+        fp = np.sum((y_pred == 1) & (y_true == 0))
+        nb = (tp / n) - (fp / n) * (thr / (1 - thr))
+        out.append({'threshold': float(thr), 'net_benefit': float(nb)})
+    return pd.DataFrame(out)
+
+
+def _save_decision_curve_plot(y_true, model_scores, fib4_scores, output_path, title_suffix='internal test'):
+    prevalence = float(np.mean(np.asarray(y_true).astype(int)))
+    thresholds = np.linspace(0.01, 0.99, 99)
+
+    model_nb = _decision_curve_net_benefit(y_true, model_scores, thresholds)
+    fib4_nb = _decision_curve_net_benefit(y_true, fib4_scores, thresholds)
+    treat_all_nb = pd.DataFrame({
+        'threshold': thresholds,
+        'net_benefit': prevalence - (1 - prevalence) * (thresholds / (1 - thresholds))
+    })
+    treat_none_nb = pd.DataFrame({'threshold': thresholds, 'net_benefit': np.zeros_like(thresholds)})
+
+    plt.figure(figsize=(8, 6))
+    plt.plot(model_nb['threshold'], model_nb['net_benefit'], label='Primary model', linewidth=2.2)
+    plt.plot(fib4_nb['threshold'], fib4_nb['net_benefit'], label='FIB-4 comparator', linewidth=2.2)
+    plt.plot(treat_all_nb['threshold'], treat_all_nb['net_benefit'], '--', label='Treat all', color='grey')
+    plt.plot(treat_none_nb['threshold'], treat_none_nb['net_benefit'], ':', label='Treat none', color='black')
+    plt.xlabel('Threshold probability')
+    plt.ylabel('Net benefit')
+    plt.title(f'Decision curve analysis ({title_suffix})')
+    plt.legend(loc='best')
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=300)
+    plt.close()
+
+
 def evaluate_performance(models, xs_test, ys_test, df_cols, model_name, classification_type, prospective,
                          xs_val=None, ys_val=None):
     # Single-pass ensemble prediction on the full held-out split.
@@ -276,6 +347,7 @@ def evaluate_performance(models, xs_test, ys_test, df_cols, model_name, classifi
     eval_proba_ref = np.asarray(ensemble_pred_probas[0])
     output_dir = _get_eval_output_dir(model_name, prospective)
     os.makedirs(output_dir, exist_ok=True)
+    os.makedirs(CLINICAL_UTILITY_DIR, exist_ok=True)
 
     threshold_metrics_lines = []
     if eval_proba_ref.shape[1] == 2:
@@ -305,8 +377,56 @@ def evaluate_performance(models, xs_test, ys_test, df_cols, model_name, classifi
             )
         if classification_type == 'three_stage':
             subgroup_df = pd.DataFrame(multiclass_rows)
+            class_counts = pd.Series(eval_y_ref).value_counts().sort_index()
+            min_subgroup_n = int(class_counts.min()) if not class_counts.empty else 0
+            exploratory_flag = min_subgroup_n < MIN_SUBGROUP_SIZE_FOR_STABLE_ESTIMATE
+            subgroup_df['min_subgroup_n'] = min_subgroup_n
+            subgroup_df['exploratory'] = exploratory_flag
+            subgroup_df['note'] = (
+                f'Exploratory: at least one subgroup has n<{MIN_SUBGROUP_SIZE_FOR_STABLE_ESTIMATE}. '
+                f'Min subgroup n={min_subgroup_n}.'
+                if exploratory_flag else 'Subgroup sizes meet minimum exploratory constraint.'
+            )
             subgroup_path = f'{output_dir}/{model_name}_{classification_type}_subgroup_metrics_table.csv'
             subgroup_df.to_csv(subgroup_path, index=False)
+
+            ordinal_metrics = {
+                'model_name': model_name,
+                'dataset_split': 'prospective' if prospective else 'internal_test',
+                'classification_type': classification_type,
+                'cohen_kappa_linear': cohen_kappa_score(eval_y_ref, ensemble_preds[0], weights='linear'),
+                'cohen_kappa_quadratic': cohen_kappa_score(eval_y_ref, ensemble_preds[0], weights='quadratic'),
+                'mae': mean_absolute_error(eval_y_ref, ensemble_preds[0]),
+                'min_subgroup_n': min_subgroup_n,
+                'exploratory': exploratory_flag,
+                'note': (
+                    f'Exploratory due to subgroup sample-size constraint (min subgroup n={min_subgroup_n}).'
+                    if exploratory_flag else 'Not marked exploratory based on subgroup sample-size rule.'
+                ),
+            }
+            ordinal_metrics_path = f'{CLINICAL_UTILITY_DIR}/ordinal_metrics_summary.csv'
+            new_row_df = pd.DataFrame([ordinal_metrics])
+            if os.path.exists(ordinal_metrics_path):
+                existing_df = pd.read_csv(ordinal_metrics_path)
+                new_row_df = pd.concat([existing_df, new_row_df], ignore_index=True)
+                new_row_df = new_row_df.drop_duplicates(
+                    subset=['model_name', 'dataset_split', 'classification_type'],
+                    keep='last'
+                )
+            new_row_df.to_csv(ordinal_metrics_path, index=False)
+    if not prospective and eval_proba_ref.shape[1] == 2:
+        fib4_scores = _extract_fib4_scores_from_features(xs_test[0], df_cols)
+        if fib4_scores is not None:
+            decision_curve_path = f'{CLINICAL_UTILITY_DIR}/decision_curve_internal_test.png'
+            _save_decision_curve_plot(
+                y_true=eval_y_ref,
+                model_scores=eval_proba_ref[:, 1],
+                fib4_scores=_to_unit_interval(fib4_scores),
+                output_path=decision_curve_path,
+                title_suffix='internal test'
+            )
+        else:
+            print('Skipped decision curve analysis: required FIB-4 biomarker columns are unavailable.')
 
     if prospective is True:
         with open(f'outputs/{model_name}/prospective/{model_name}_{classification_type}_ensemble_preds.txt', 'w') as f:
