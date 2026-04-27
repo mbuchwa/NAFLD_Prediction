@@ -1,10 +1,7 @@
 from src.utils.helper_functions import *
 from src.utils.validation_tools import evaluate_performance, interpret
 from sklearn.model_selection import RandomizedSearchCV
-import shap
 import lightgbm as lgb
-import te2rules
-from te2rules.explainer import ModelExplainer
 
 
 def hypertrain_ensemble_light_gbm(xs_train, ys_train, xs_val, ys_val, xs_test, ys_test, xs_pro, ys_pro, df_cols,
@@ -258,65 +255,65 @@ def hypertrain_light_gbm_model(x_train, y_train, x_val, y_val, x_test=None, y_te
         sklearn model: The trained model.
     """
     # ---------------------------------------------------------
-    from sklearn.linear_model import LogisticRegression
-    from sklearn.metrics import accuracy_score, f1_score, confusion_matrix
-
-    model = LogisticRegression()
-    model.fit(x_train, y_train)
-
-    # Extract coefficients and intercept
-    coefficients = model.coef_[0]
-    intercept = model.intercept_[0]
-
-    # Map coefficients to feature names
-    feature_names = ['Thrombozyten (Mrd/l)', 'MCV (fl)', 'INR']
-    coef_dict = dict(zip(feature_names, coefficients))
-
-    # Print the logistic regression equation
-    print("Logistic Regression Equation:")
-    print(
-        f"log-odds = {intercept:.4f} + ({coef_dict['Thrombozyten (Mrd/l)']:.4f} * Thrombozyten (Mrd/l)) + ({coef_dict['MCV (fl)']:.4f} * MCV (fl)) + ({coef_dict['INR']:.4f} * INR)")
-
-    # To get the probability, use the sigmoid function
-    print("\nProbability of positive class (P):")
-    print("P = 1 / (1 + exp(-log-odds))")
-
-    breakpoint()
-    # Make predictions on the test set
-    y_test_pred_proba = model.predict_proba(x_test)[:, 1]  # Probabilities for the positive class
-    y_test_pred = (y_test_pred_proba >= 0.5).astype(int)  # Convert probabilities to binary prediction
-
-    # Calculate metrics
-    accuracy = accuracy_score(y_test, y_test_pred)
-    f1 = f1_score(y_test, y_test_pred)
-    tn, fp, fn, tp = confusion_matrix(y_test, y_test_pred).ravel()
-    ppv = tp / (tp + fp)  # Positive Predictive Value (Precision)
-    tpr = tp / (tp + fn)  # True Positive Rate (Recall)
-
-    # Print metrics
-    print(f"Accuracy: {accuracy:.4f}")
-    print(f"F1 Score: {f1:.4f}")
-    print(f"Positive Predictive Value (PPV): {ppv:.4f}")
-    print(f"True Positive Rate (TPR): {tpr:.4f}")
-    
-    # Make predictions on the prospective set
-    y_pro_pred_proba = model.predict_proba(x_pro)[:, 1]  # Probabilities for the positive class
-    y_pro_pred = (y_pro_pred_proba >= 0.5).astype(int)  # Convert probabilities to binary prediction
-
-    # Calculate metrics
-    accuracy = accuracy_score(y_pro, y_pro_pred)
-    f1 = f1_score(y_pro, y_pro_pred)
-    tn, fp, fn, tp = confusion_matrix(y_pro, y_pro_pred).ravel()
-    ppv = tp / (tp + fp)  # Positive Predictive Value (Precision)
-    tpr = tp / (tp + fn)  # True Positive Rate (Recall)
-
-    # Print metrics
-    print(f"Accuracy: {accuracy:.4f}")
-    print(f"F1 Score: {f1:.4f}")
-    print(f"Positive Predictive Value (PPV): {ppv:.4f}")
-    print(f"True Positive Rate (TPR): {tpr:.4f}")
-    breakpoint()
-
+    # from sklearn.linear_model import LogisticRegression
+    # from sklearn.metrics import accuracy_score, f1_score, confusion_matrix
+    #
+    # model = LogisticRegression()
+    # model.fit(x_train, y_train)
+    #
+    # # Extract coefficients and intercept
+    # coefficients = model.coef_[0]
+    # intercept = model.intercept_[0]
+    #
+    # # Map coefficients to feature names
+    # feature_names = ['Thrombozyten (Mrd/l)', 'MCV (fl)', 'INR']
+    # coef_dict = dict(zip(feature_names, coefficients))
+    #
+    # # Print the logistic regression equation
+    # print("Logistic Regression Equation:")
+    # print(
+    #     f"log-odds = {intercept:.4f} + ({coef_dict['Thrombozyten (Mrd/l)']:.4f} * Thrombozyten (Mrd/l)) + ({coef_dict['MCV (fl)']:.4f} * MCV (fl)) + ({coef_dict['INR']:.4f} * INR)")
+    #
+    # # To get the probability, use the sigmoid function
+    # print("\nProbability of positive class (P):")
+    # print("P = 1 / (1 + exp(-log-odds))")
+    #
+    # breakpoint()
+    # # Make predictions on the test set
+    # y_test_pred_proba = model.predict_proba(x_test)[:, 1]  # Probabilities for the positive class
+    # y_test_pred = (y_test_pred_proba >= 0.5).astype(int)  # Convert probabilities to binary prediction
+    #
+    # # Calculate metrics
+    # accuracy = accuracy_score(y_test, y_test_pred)
+    # f1 = f1_score(y_test, y_test_pred)
+    # tn, fp, fn, tp = confusion_matrix(y_test, y_test_pred).ravel()
+    # ppv = tp / (tp + fp)  # Positive Predictive Value (Precision)
+    # tpr = tp / (tp + fn)  # True Positive Rate (Recall)
+    #
+    # # Print metrics
+    # print(f"Accuracy: {accuracy:.4f}")
+    # print(f"F1 Score: {f1:.4f}")
+    # print(f"Positive Predictive Value (PPV): {ppv:.4f}")
+    # print(f"True Positive Rate (TPR): {tpr:.4f}")
+    #
+    # # Make predictions on the prospective set
+    # y_pro_pred_proba = model.predict_proba(x_pro)[:, 1]  # Probabilities for the positive class
+    # y_pro_pred = (y_pro_pred_proba >= 0.5).astype(int)  # Convert probabilities to binary prediction
+    #
+    # # Calculate metrics
+    # accuracy = accuracy_score(y_pro, y_pro_pred)
+    # f1 = f1_score(y_pro, y_pro_pred)
+    # tn, fp, fn, tp = confusion_matrix(y_pro, y_pro_pred).ravel()
+    # ppv = tp / (tp + fp)  # Positive Predictive Value (Precision)
+    # tpr = tp / (tp + fn)  # True Positive Rate (Recall)
+    #
+    # # Print metrics
+    # print(f"Accuracy: {accuracy:.4f}")
+    # print(f"F1 Score: {f1:.4f}")
+    # print(f"Positive Predictive Value (PPV): {ppv:.4f}")
+    # print(f"True Positive Rate (TPR): {tpr:.4f}")
+    # breakpoint()
+    #
     # ---------------------------------------------------------
 
     grid_params = {
@@ -326,7 +323,7 @@ def hypertrain_light_gbm_model(x_train, y_train, x_val, y_val, x_test=None, y_te
     }
 
     if classification_type in ['fibrosis', 'cirrhosis', 'two_stage']:
-        lgb_model = lgb.LGBMClassifier(boosting_type='gbdt', objective='regression', verbosity=-1)
+        lgb_model = lgb.LGBMClassifier(boosting_type='gbdt', objective='binary', verbosity=-1)
 
     elif classification_type == 'three_stage':
         lgb_model = lgb.LGBMClassifier(boosting_type='gbdt', objective='multiclass', num_class=3, verbosity=-1)
