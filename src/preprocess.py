@@ -393,6 +393,9 @@ def export_patient_attrition(df, output_dir='outputs/data_qc', window_days_pre=N
     """
     Build and export patient attrition counts aligned with manuscript flow-diagram wording.
 
+    The step labels are intentionally fixed so they can be copied directly into the
+    manuscript's patient flow diagram.
+
     Args:
         df (pd.DataFrame): Source dataframe before preprocessing.
         output_dir (str): Output directory for attrition artifacts.
@@ -454,15 +457,28 @@ def export_patient_attrition(df, output_dir='outputs/data_qc', window_days_pre=N
         final_df = final_df.dropna(subset=['Micro'])
     final_analytic_cohort = cohort_count(final_df)
 
-    attrition_rows = [
-        {'step': 'raw source count', 'count': raw_source_count},
-        {'step': 'after eligibility filters', 'count': after_eligibility_filters},
-        {'step': 'after required biopsy/lab linkage', 'count': after_required_biopsy_lab_linkage},
-        {'step': 'after missingness exclusions', 'count': after_missingness_exclusions},
-        {'step': 'final analytic cohort', 'count': final_analytic_cohort}
+    manuscript_step_labels = [
+        'raw source count',
+        'after eligibility filters',
+        'after required biopsy/lab linkage',
+        'after missingness exclusions',
+        'final analytic cohort'
     ]
 
-    attrition_df = pd.DataFrame(attrition_rows)
+    attrition_counts = [
+        raw_source_count,
+        after_eligibility_filters,
+        after_required_biopsy_lab_linkage,
+        after_missingness_exclusions,
+        final_analytic_cohort
+    ]
+
+    attrition_rows = [
+        {'step': step_label, 'count': int(step_count)}
+        for step_label, step_count in zip(manuscript_step_labels, attrition_counts)
+    ]
+
+    attrition_df = pd.DataFrame(attrition_rows, columns=['step', 'count'])
     attrition_json = {row['step']: row['count'] for row in attrition_rows}
 
     output_base = Path(__file__).resolve().parents[1] / output_dir
