@@ -97,13 +97,11 @@ def make_ensemble_preds(xs_test, ys_test, models, intra_model_preds=False):
     ensemble_pred_probas = []  # stores the probability of both classes
 
     X_all, y_all = xs_test[0], ys_test[0]
-    y_preds_all = []
-
-    for model in models:
-        probas_all = model.predict_proba(X_all)
-        y_preds_all.append(probas_all)
-
-        if intra_model_preds:
+    if intra_model_preds:
+        y_preds_all = []
+        for model in models:
+            probas_all = model.predict_proba(X_all)
+            y_preds_all.append(probas_all)
             ensemble_pred_probas.append(probas_all)
             ensemble_pred, probas = get_index_and_proba(probas_all.tolist())
             maj_report, cm = test(y=y_all, y_pred=ensemble_pred)
@@ -111,22 +109,25 @@ def make_ensemble_preds(xs_test, ys_test, models, intra_model_preds=False):
             ensemble_cms.append(cm)
             ensemble_preds.append(ensemble_pred)
             ensemble_probas.append(probas)
-
-    if intra_model_preds:
         return ensemble_reports, ensemble_cms, ensemble_preds, ensemble_probas, ensemble_pred_probas
 
-    ensemble_pred_all_probas = majority_vote(y_preds_all, rule='soft')
-    ensemble_pred_probas.append(ensemble_pred_all_probas)
-    ensemble_pred_all, probas_all = get_index_and_proba(ensemble_pred_all_probas)
-    ensemble_pred_all = np.array(ensemble_pred_all)
+    for X, y in zip(xs_test, ys_test):
+        y_preds = []
+        for model in models:
+            y_preds.append(model.predict_proba(X))
 
-    maj_report = classification_report(y_all, ensemble_pred_all, output_dict=True)
-    cm = confusion_matrix(y_all, ensemble_pred_all)
+        ensemble_pred_proba = majority_vote(y_preds, rule='soft')
+        ensemble_pred_probas.append(ensemble_pred_proba)
+        ensemble_pred, probas = get_index_and_proba(ensemble_pred_proba)
+        ensemble_pred = np.array(ensemble_pred)
 
-    ensemble_reports.append(maj_report)
-    ensemble_cms.append(cm)
-    ensemble_preds.append(ensemble_pred_all)
-    ensemble_probas.append(probas_all)
+        maj_report = classification_report(y, ensemble_pred, output_dict=True)
+        cm = confusion_matrix(y, ensemble_pred)
+
+        ensemble_reports.append(maj_report)
+        ensemble_cms.append(cm)
+        ensemble_preds.append(ensemble_pred)
+        ensemble_probas.append(probas)
 
     return ensemble_reports, ensemble_cms, ensemble_preds, ensemble_probas, ensemble_pred_probas
 
@@ -237,6 +238,44 @@ def remove_files_in_directory(directory):
             file_path = os.path.join(directory, file)
             if os.path.isfile(file_path):
                 os.remove(file_path)
-
     else:
         print(f'{directory} already empty')
+
+
+def _bounded_metric_variance(metric_value, n):
+    metric_value = float(np.clip(metric_value, 1e-6, 1 - 1e-6))
+    n = max(int(n), 1)
+    return metric_value * (1.0 - metric_value) / n
+
+
+def pool_classification_metrics_with_rubins_rules(reports, sample_sizes):
+    metric_paths = {
+        'ACC': ('accuracy',),
+        'F1': ('macro avg', 'f1-score'),
+        'PPV': ('macro avg', 'precision'),
+        'TPR': ('macro avg', 'recall'),
+    }
+    m = len(reports)
+    pooled = {}
+    for metric_name, path in metric_paths.items():
+        estimates = [float(report[path[0]] if len(path) == 1 else report[path[0]][path[1]]) for report in reports]
+        variances = [_bounded_metric_variance(est, n) for est, n in zip(estimates, sample_sizes)]
+        q_bar = float(np.mean(estimates))
+        u_bar = float(np.mean(variances))
+        b = float(np.var(estimates, ddof=1)) if m > 1 else 0.0
+        total_var = u_bar + (1.0 + 1.0 / m) * b
+        se = float(np.sqrt(max(total_var, 0.0)))
+
+        crit = 1.96
+        lower = q_bar - crit * se
+        upper = q_bar + crit * se
+
+        pooled[metric_name] = {
+            'estimate': q_bar,
+            'ci_lower': float(np.clip(lower, 0.0, 1.0)),
+            'ci_upper': float(np.clip(upper, 0.0, 1.0)),
+            'within_var': u_bar,
+            'between_var': b,
+            'total_var': total_var
+        }
+    return pooled

@@ -53,18 +53,19 @@ def evaluate_performance(models, xs_test, ys_test, df_cols, model_name, classifi
                 f.write(str(report))
                 f.write(str(cm))
 
-    acc, f1, ppv, tpr = [], [], [], []
-    for report in ensemble_reports:
-        acc.append(report['accuracy'])
-        f1.append(report['macro avg']['f1-score'])
-        ppv.append(report['macro avg']['precision'])
-        tpr.append(report['macro avg']['recall'])
-
-    performance_string = f'\n Ensemble {model_name} \n' \
-                         f'Average ACC: {np.round(np.average(acc) * 100, 2)} | Std ACC: {np.round(np.std(acc) * 100, 2)},\n' \
-                         f'Average F1: {np.round(np.average(f1) * 100, 2)} | Std F1: {np.round(np.std(f1) * 100, 2)},\n' \
-                         f'Average PPV: {np.round(np.average(ppv) * 100, 2)} | Std PPV: {np.round(np.std(ppv) * 100, 2)},\n' \
-                         f'Average TPR: {np.round(np.average(tpr) * 100, 2)} | Std TPR: {np.round(np.std(tpr) * 100, 2)}\n'
+    pooled_metrics = pool_classification_metrics_with_rubins_rules(
+        reports=ensemble_reports,
+        sample_sizes=[len(y) for y in ys_test]
+    )
+    performance_lines = [f'\n Ensemble {model_name} (Rubin pooled across imputations)\n']
+    for metric in ['ACC', 'F1', 'PPV', 'TPR']:
+        values = pooled_metrics[metric]
+        performance_lines.append(
+            f"{metric}: {values['estimate'] * 100:.2f}% "
+            f"(95% CI {values['ci_lower'] * 100:.2f}%-{values['ci_upper'] * 100:.2f}%; "
+            f"within_var={values['within_var']:.6f}, between_var={values['between_var']:.6f})"
+        )
+    performance_string = '\n'.join(performance_lines) + '\n'
 
     print(performance_string)
 
@@ -296,17 +297,13 @@ def make_ensemble_preds_pytorch(xs_test, ys_test, models, intra_model_preds=Fals
     ensemble_pred_probas = []
 
     X_all, y_all = xs_test[0], ys_test[0]
-    if not torch.is_tensor(X_all):
-        X_all = torch.tensor(X_all)
-
-    y_preds_all = []
-    for model in models:
-        model.eval()
-        with torch.no_grad():
-            probas_all = model(X_all.float()).detach().cpu().numpy()
-            y_preds_all.append(probas_all)
-
-        if intra_model_preds:
+    if intra_model_preds:
+        if not torch.is_tensor(X_all):
+            X_all = torch.tensor(X_all)
+        for model in models:
+            model.eval()
+            with torch.no_grad():
+                probas_all = model(X_all.float()).detach().cpu().numpy()
             ensemble_pred_probas.append(probas_all)
             ensemble_pred, probas = get_index_and_proba(probas_all.tolist())
             maj_report, cm = test(y=y_all, y_pred=ensemble_pred)
@@ -314,22 +311,25 @@ def make_ensemble_preds_pytorch(xs_test, ys_test, models, intra_model_preds=Fals
             ensemble_cms.append(cm)
             ensemble_preds.append(ensemble_pred)
             ensemble_probas.append(probas)
-
-    if intra_model_preds:
         return ensemble_reports, ensemble_cms, ensemble_preds, ensemble_probas, ensemble_pred_probas
 
-    ensemble_pred_all_probas = majority_vote(y_preds_all, rule='soft')
-    ensemble_pred_probas.append(ensemble_pred_all_probas)
-    ensemble_pred_all, probas_all = get_index_and_proba(ensemble_pred_all_probas)
-    ensemble_pred_all = np.array(ensemble_pred_all)
-
-    maj_report = classification_report(y_all, ensemble_pred_all, output_dict=True)
-    cm = confusion_matrix(y_all, ensemble_pred_all)
-
-    ensemble_reports.append(maj_report)
-    ensemble_cms.append(cm)
-    ensemble_preds.append(ensemble_pred_all)
-    ensemble_probas.append(probas_all)
+    for X, y in zip(xs_test, ys_test):
+        x_tensor = X if torch.is_tensor(X) else torch.tensor(X)
+        y_preds = []
+        for model in models:
+            model.eval()
+            with torch.no_grad():
+                y_preds.append(model(x_tensor.float()).detach().cpu().numpy())
+        ensemble_pred_proba = majority_vote(y_preds, rule='soft')
+        ensemble_pred_probas.append(ensemble_pred_proba)
+        ensemble_pred, probas = get_index_and_proba(ensemble_pred_proba)
+        ensemble_pred = np.array(ensemble_pred)
+        maj_report = classification_report(y, ensemble_pred, output_dict=True)
+        cm = confusion_matrix(y, ensemble_pred)
+        ensemble_reports.append(maj_report)
+        ensemble_cms.append(cm)
+        ensemble_preds.append(ensemble_pred)
+        ensemble_probas.append(probas)
 
     return ensemble_reports, ensemble_cms, ensemble_preds, ensemble_probas, ensemble_pred_probas
 
@@ -360,20 +360,15 @@ def make_ensemble_preds_gandalf(xs_test, ys_test, df_cols, models, classificatio
     ensemble_pred_probas = []
 
     X_all, y_all = xs_test[0], ys_test[0]
-    test_data_all = pd.DataFrame(data=X_all, columns=df_cols)
-    test_data_all['target'] = y_all
-
-    y_preds_all = []
-    for model in models:
-        probas_df_all = model.predict(test_data_all)
-        if classification_type == 'three_stage':
-            probas_all = probas_df_all[['0_probability', '1_probability', '2_probability']].values.tolist()
-        else:
-            probas_all = probas_df_all[['0_probability', '1_probability']].values.tolist()
-
-        y_preds_all.append(probas_all)
-
-        if intra_model_preds:
+    if intra_model_preds:
+        test_data_all = pd.DataFrame(data=X_all, columns=df_cols)
+        test_data_all['target'] = y_all
+        for model in models:
+            probas_df_all = model.predict(test_data_all)
+            if classification_type == 'three_stage':
+                probas_all = probas_df_all[['0_probability', '1_probability', '2_probability']].values.tolist()
+            else:
+                probas_all = probas_df_all[['0_probability', '1_probability']].values.tolist()
             ensemble_pred_probas.append(probas_all)
             ensemble_pred, probas = get_index_and_proba(probas_all)
             maj_report, cm = test(y=y_all, y_pred=ensemble_pred)
@@ -381,22 +376,28 @@ def make_ensemble_preds_gandalf(xs_test, ys_test, df_cols, models, classificatio
             ensemble_cms.append(cm)
             ensemble_preds.append(ensemble_pred)
             ensemble_probas.append(probas)
-
-    if intra_model_preds:
         return ensemble_reports, ensemble_cms, ensemble_preds, ensemble_probas, ensemble_pred_probas
 
-    ensemble_pred_all_probas = majority_vote(y_preds_all, rule='soft')
-    ensemble_pred_probas.append(ensemble_pred_all_probas)
-    ensemble_pred_all, probas_all = get_index_and_proba(ensemble_pred_all_probas)
-    ensemble_pred_all = np.array(ensemble_pred_all)
-
-    maj_report = classification_report(y_all, ensemble_pred_all, output_dict=True)
-    cm = confusion_matrix(y_all, ensemble_pred_all)
-
-    ensemble_reports.append(maj_report)
-    ensemble_cms.append(cm)
-    ensemble_preds.append(ensemble_pred_all)
-    ensemble_probas.append(probas_all)
+    for X, y in zip(xs_test, ys_test):
+        test_data = pd.DataFrame(data=X, columns=df_cols)
+        test_data['target'] = y
+        y_preds = []
+        for model in models:
+            probas_df = model.predict(test_data)
+            if classification_type == 'three_stage':
+                y_preds.append(probas_df[['0_probability', '1_probability', '2_probability']].values.tolist())
+            else:
+                y_preds.append(probas_df[['0_probability', '1_probability']].values.tolist())
+        ensemble_pred_proba = majority_vote(y_preds, rule='soft')
+        ensemble_pred_probas.append(ensemble_pred_proba)
+        ensemble_pred, probas = get_index_and_proba(ensemble_pred_proba)
+        ensemble_pred = np.array(ensemble_pred)
+        maj_report = classification_report(y, ensemble_pred, output_dict=True)
+        cm = confusion_matrix(y, ensemble_pred)
+        ensemble_reports.append(maj_report)
+        ensemble_cms.append(cm)
+        ensemble_preds.append(ensemble_pred)
+        ensemble_probas.append(probas)
 
     return ensemble_reports, ensemble_cms, ensemble_preds, ensemble_probas, ensemble_pred_probas
 
@@ -425,17 +426,13 @@ def make_ensemble_preds_vi_bnn(xs_test, ys_test, models, intra_model_preds=False
     ensemble_pred_probas = []
 
     X_all, y_all = xs_test[0], ys_test[0]
-    if not torch.is_tensor(X_all):
-        X_all = torch.tensor(X_all, device=get_device(i=0))
-
-    y_preds_all = []
-    for model in models:
-        model.eval()
-        with torch.no_grad():
-            probas_all = model(X_all.float()).detach().cpu().numpy()
-            y_preds_all.append(probas_all)
-
-        if intra_model_preds:
+    if intra_model_preds:
+        if not torch.is_tensor(X_all):
+            X_all = torch.tensor(X_all, device=get_device(i=0))
+        for model in models:
+            model.eval()
+            with torch.no_grad():
+                probas_all = model(X_all.float()).detach().cpu().numpy()
             ensemble_pred_probas.append(probas_all)
             ensemble_pred, probas = get_index_and_proba(probas_all.tolist())
             maj_report, cm = test(y=y_all, y_pred=ensemble_pred)
@@ -443,22 +440,25 @@ def make_ensemble_preds_vi_bnn(xs_test, ys_test, models, intra_model_preds=False
             ensemble_cms.append(cm)
             ensemble_preds.append(ensemble_pred)
             ensemble_probas.append(probas)
-
-    if intra_model_preds:
         return ensemble_reports, ensemble_cms, ensemble_preds, ensemble_probas, ensemble_pred_probas
 
-    ensemble_pred_all_probas = majority_vote(y_preds_all, rule='soft')
-    ensemble_pred_probas.append(ensemble_pred_all_probas)
-    ensemble_pred_all, probas_all = get_index_and_proba(ensemble_pred_all_probas)
-    ensemble_pred_all = np.array(ensemble_pred_all)
-
-    maj_report = classification_report(y_all, ensemble_pred_all, output_dict=True)
-    cm = confusion_matrix(y_all, ensemble_pred_all)
-
-    ensemble_reports.append(maj_report)
-    ensemble_cms.append(cm)
-    ensemble_preds.append(ensemble_pred_all)
-    ensemble_probas.append(probas_all)
+    for X, y in zip(xs_test, ys_test):
+        x_tensor = X if torch.is_tensor(X) else torch.tensor(X, device=get_device(i=0))
+        y_preds = []
+        for model in models:
+            model.eval()
+            with torch.no_grad():
+                y_preds.append(model(x_tensor.float()).detach().cpu().numpy())
+        ensemble_pred_proba = majority_vote(y_preds, rule='soft')
+        ensemble_pred_probas.append(ensemble_pred_proba)
+        ensemble_pred, probas = get_index_and_proba(ensemble_pred_proba)
+        ensemble_pred = np.array(ensemble_pred)
+        maj_report = classification_report(y, ensemble_pred, output_dict=True)
+        cm = confusion_matrix(y, ensemble_pred)
+        ensemble_reports.append(maj_report)
+        ensemble_cms.append(cm)
+        ensemble_preds.append(ensemble_pred)
+        ensemble_probas.append(probas)
 
     return ensemble_reports, ensemble_cms, ensemble_preds, ensemble_probas, ensemble_pred_probas
 
@@ -692,14 +692,10 @@ def make_ensemble_preds_tab_transformer(xs_test, ys_test, models, intra_model_pr
     ensemble_pred_probas = []
 
     X_all, y_all = xs_test[0], ys_test[0]
-    x_tensor_all = torch.tensor(X_all, dtype=torch.float32)
-    y_preds_all = []
-
-    for model in models:
-        probas_all = model(x_tensor_all).detach().cpu().numpy()
-        y_preds_all.append(probas_all)
-
-        if intra_model_preds:
+    if intra_model_preds:
+        x_tensor_all = torch.tensor(X_all, dtype=torch.float32)
+        for model in models:
+            probas_all = model(x_tensor_all).detach().cpu().numpy()
             ensemble_pred_probas.append(probas_all)
             ensemble_pred, probas = get_index_and_proba(probas_all.tolist())
             maj_report, cm = test(y=y_all, y_pred=ensemble_pred)
@@ -707,21 +703,20 @@ def make_ensemble_preds_tab_transformer(xs_test, ys_test, models, intra_model_pr
             ensemble_cms.append(cm)
             ensemble_preds.append(ensemble_pred)
             ensemble_probas.append(probas)
-
-    if intra_model_preds:
         return ensemble_reports, ensemble_cms, ensemble_preds, ensemble_probas, ensemble_pred_probas
 
-    ensemble_pred_all_probas = majority_vote(y_preds_all, rule='soft')
-    ensemble_pred_probas.append(ensemble_pred_all_probas)
-    ensemble_pred_all, probas_all = get_index_and_proba(ensemble_pred_all_probas)
-    ensemble_pred_all = np.array(ensemble_pred_all)
-
-    maj_report = classification_report(y_all, ensemble_pred_all, output_dict=True)
-    cm = confusion_matrix(y_all, ensemble_pred_all)
-
-    ensemble_reports.append(maj_report)
-    ensemble_cms.append(cm)
-    ensemble_preds.append(ensemble_pred_all)
-    ensemble_probas.append(probas_all)
+    for X, y in zip(xs_test, ys_test):
+        x_tensor = torch.tensor(X, dtype=torch.float32)
+        y_preds = [model(x_tensor).detach().cpu().numpy() for model in models]
+        ensemble_pred_proba = majority_vote(y_preds, rule='soft')
+        ensemble_pred_probas.append(ensemble_pred_proba)
+        ensemble_pred, probas = get_index_and_proba(ensemble_pred_proba)
+        ensemble_pred = np.array(ensemble_pred)
+        maj_report = classification_report(y, ensemble_pred, output_dict=True)
+        cm = confusion_matrix(y, ensemble_pred)
+        ensemble_reports.append(maj_report)
+        ensemble_cms.append(cm)
+        ensemble_preds.append(ensemble_pred)
+        ensemble_probas.append(probas)
 
     return ensemble_reports, ensemble_cms, ensemble_preds, ensemble_probas, ensemble_pred_probas
