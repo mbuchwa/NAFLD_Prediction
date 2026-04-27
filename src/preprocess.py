@@ -60,6 +60,13 @@ def preprare_data(classification_type, shap_selected, scaling, finetune=False, s
         df = pd.concat([df, df2], axis=1)
 
     print(f'\n----- length of original dataframe: {len(df)} -----\n')
+    _, attrition_json = export_patient_attrition(
+        df,
+        output_dir='outputs/data_qc',
+        window_days_pre=window_days_pre,
+        window_days_post=window_days_post
+    )
+    print(f'Patient attrition summary: {attrition_json}')
 
     if finetune:
         # Split df into train_val_df and test_df
@@ -222,11 +229,12 @@ def temporal_filter_pre_biopsy_labs(df, biopsy_date_col='Biopsie', lab_date_col=
             'within_window_count': 0,
             'multiple_pre_biopsy_count': 0
         }
-        summary_path = Path(summary_output_path)
-        summary_path.parent.mkdir(parents=True, exist_ok=True)
-        pd.DataFrame([audit_counts]).to_csv(summary_path, index=False)
-        with open(summary_path.with_suffix('.json'), 'w', encoding='utf-8') as f:
-            json.dump(audit_counts, f, indent=2)
+        if summary_output_path:
+            summary_path = Path(summary_output_path)
+            summary_path.parent.mkdir(parents=True, exist_ok=True)
+            pd.DataFrame([audit_counts]).to_csv(summary_path, index=False)
+            with open(summary_path.with_suffix('.json'), 'w', encoding='utf-8') as f:
+                json.dump(audit_counts, f, indent=2)
         return df, audit_counts
 
     if patient_id_col is None:
@@ -271,15 +279,88 @@ def temporal_filter_pre_biopsy_labs(df, biopsy_date_col='Biopsie', lab_date_col=
         'multiple_pre_biopsy_count': multiple_pre_biopsy_count
     }
 
-    summary_path = Path(summary_output_path)
-    summary_path.parent.mkdir(parents=True, exist_ok=True)
+    if summary_output_path:
+        summary_path = Path(summary_output_path)
+        summary_path.parent.mkdir(parents=True, exist_ok=True)
 
-    summary_df = pd.DataFrame([audit_counts])
-    summary_df.to_csv(summary_path, index=False)
-    with open(summary_path.with_suffix('.json'), 'w', encoding='utf-8') as f:
-        json.dump(audit_counts, f, indent=2)
+        summary_df = pd.DataFrame([audit_counts])
+        summary_df.to_csv(summary_path, index=False)
+        with open(summary_path.with_suffix('.json'), 'w', encoding='utf-8') as f:
+            json.dump(audit_counts, f, indent=2)
 
     return filtered_df, audit_counts
+
+
+def export_patient_attrition(df, output_dir='outputs/data_qc', window_days_pre=None, window_days_post=0):
+    """
+    Build and export patient attrition counts aligned with manuscript flow-diagram wording.
+
+    Args:
+        df (pd.DataFrame): Source dataframe before preprocessing.
+        output_dir (str): Output directory for attrition artifacts.
+        window_days_pre (int|None): Optional pre-biopsy lookback window in days.
+        window_days_post (int): Optional post-biopsy look-forward window in days.
+
+    Returns:
+        tuple[pd.DataFrame, dict]: Attrition table and JSON payload.
+    """
+    working_df = df.copy().reset_index(drop=True)
+    candidate_id_cols = ['Patient_ID', 'PatientID', 'patient_id', 'ID', 'PatID', 'Lfd. Nr.']
+    patient_id_col = next((col for col in candidate_id_cols if col in working_df.columns), None)
+
+    def cohort_count(input_df):
+        if patient_id_col and patient_id_col in input_df.columns:
+            return int(input_df[patient_id_col].nunique())
+        return int(len(input_df))
+
+    raw_source_count = cohort_count(working_df)
+
+    eligibility_df = working_df.copy()
+    if 'Micro' in eligibility_df.columns:
+        eligibility_df['Micro'] = pd.to_numeric(eligibility_df['Micro'], errors='coerce')
+        eligibility_df = eligibility_df.dropna(subset=['Micro'])
+    after_eligibility_filters = cohort_count(eligibility_df)
+
+    linkage_df, _ = temporal_filter_pre_biopsy_labs(
+        eligibility_df,
+        patient_id_col=patient_id_col,
+        window_days_pre=window_days_pre,
+        window_days_post=window_days_post,
+        summary_output_path=None
+    )
+    after_required_biopsy_lab_linkage = cohort_count(linkage_df)
+
+    missingness_df = calculate_age(linkage_df.copy())
+    missingness_df, _ = clean_df(missingness_df)
+    missingness_df = missingness_df.astype(float)
+    missingness_df = missingness_df.dropna(subset=['Micro'])
+    missingness_df = drop_rows_with_high_missing_data(missingness_df)
+    after_missingness_exclusions = cohort_count(missingness_df)
+
+    final_df = missingness_df.copy()
+    if 'Micro' in final_df.columns:
+        final_df['Micro'] = final_df['Micro'].apply(lambda x: categorize_micro(x, classification_type='fibrosis'))
+        final_df = final_df.dropna(subset=['Micro'])
+    final_analytic_cohort = cohort_count(final_df)
+
+    attrition_rows = [
+        {'step': 'raw source count', 'count': raw_source_count},
+        {'step': 'after eligibility filters', 'count': after_eligibility_filters},
+        {'step': 'after required biopsy/lab linkage', 'count': after_required_biopsy_lab_linkage},
+        {'step': 'after missingness exclusions', 'count': after_missingness_exclusions},
+        {'step': 'final analytic cohort', 'count': final_analytic_cohort}
+    ]
+
+    attrition_df = pd.DataFrame(attrition_rows)
+    attrition_json = {row['step']: row['count'] for row in attrition_rows}
+
+    output_base = Path(__file__).resolve().parents[1] / output_dir
+    output_base.mkdir(parents=True, exist_ok=True)
+    attrition_df.to_csv(output_base / 'patient_attrition.csv', index=False)
+    with open(output_base / 'patient_attrition.json', 'w', encoding='utf-8') as f:
+        json.dump(attrition_json, f, indent=2)
+
+    return attrition_df, attrition_json
 
 def preprocess(df, data_type='train', classification_type='fibrosis', scaling=False, scaler=None,
                shap_selected=False, select_closest_patients_from_mainz=False, smote=False,
