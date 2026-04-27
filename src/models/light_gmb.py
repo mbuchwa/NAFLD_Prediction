@@ -254,6 +254,68 @@ def hypertrain_light_gbm_model(x_train, y_train, x_val, y_val, x_test=None, y_te
     Returns:
         sklearn model: The trained model.
     """
+    # ---------------------------------------------------------
+    # from sklearn.linear_model import LogisticRegression
+    # from sklearn.metrics import accuracy_score, f1_score, confusion_matrix
+    #
+    # model = LogisticRegression()
+    # model.fit(x_train, y_train)
+    #
+    # # Extract coefficients and intercept
+    # coefficients = model.coef_[0]
+    # intercept = model.intercept_[0]
+    #
+    # # Map coefficients to feature names
+    # feature_names = ['Thrombozyten (Mrd/l)', 'MCV (fl)', 'INR']
+    # coef_dict = dict(zip(feature_names, coefficients))
+    #
+    # # Print the logistic regression equation
+    # print("Logistic Regression Equation:")
+    # print(
+    #     f"log-odds = {intercept:.4f} + ({coef_dict['Thrombozyten (Mrd/l)']:.4f} * Thrombozyten (Mrd/l)) + ({coef_dict['MCV (fl)']:.4f} * MCV (fl)) + ({coef_dict['INR']:.4f} * INR)")
+    #
+    # # To get the probability, use the sigmoid function
+    # print("\nProbability of positive class (P):")
+    # print("P = 1 / (1 + exp(-log-odds))")
+    #
+    # breakpoint()
+    # # Make predictions on the test set
+    # y_test_pred_proba = model.predict_proba(x_test)[:, 1]  # Probabilities for the positive class
+    # y_test_pred = (y_test_pred_proba >= 0.5).astype(int)  # Convert probabilities to binary prediction
+    #
+    # # Calculate metrics
+    # accuracy = accuracy_score(y_test, y_test_pred)
+    # f1 = f1_score(y_test, y_test_pred)
+    # tn, fp, fn, tp = confusion_matrix(y_test, y_test_pred).ravel()
+    # ppv = tp / (tp + fp)  # Positive Predictive Value (Precision)
+    # tpr = tp / (tp + fn)  # True Positive Rate (Recall)
+    #
+    # # Print metrics
+    # print(f"Accuracy: {accuracy:.4f}")
+    # print(f"F1 Score: {f1:.4f}")
+    # print(f"Positive Predictive Value (PPV): {ppv:.4f}")
+    # print(f"True Positive Rate (TPR): {tpr:.4f}")
+    #
+    # # Make predictions on the prospective set
+    # y_pro_pred_proba = model.predict_proba(x_pro)[:, 1]  # Probabilities for the positive class
+    # y_pro_pred = (y_pro_pred_proba >= 0.5).astype(int)  # Convert probabilities to binary prediction
+    #
+    # # Calculate metrics
+    # accuracy = accuracy_score(y_pro, y_pro_pred)
+    # f1 = f1_score(y_pro, y_pro_pred)
+    # tn, fp, fn, tp = confusion_matrix(y_pro, y_pro_pred).ravel()
+    # ppv = tp / (tp + fp)  # Positive Predictive Value (Precision)
+    # tpr = tp / (tp + fn)  # True Positive Rate (Recall)
+    #
+    # # Print metrics
+    # print(f"Accuracy: {accuracy:.4f}")
+    # print(f"F1 Score: {f1:.4f}")
+    # print(f"Positive Predictive Value (PPV): {ppv:.4f}")
+    # print(f"True Positive Rate (TPR): {tpr:.4f}")
+    # breakpoint()
+    #
+    # ---------------------------------------------------------
+
     grid_params = {
         'max_depth': np.arange(1, 40),
         'learning_rate': np.linspace(0.5, 0.01, 5),
