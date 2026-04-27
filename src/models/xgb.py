@@ -53,7 +53,7 @@ def evaluate_ensemble_xgboost(xs_test, ys_test, xs_pro, ys_pro, df_cols, classif
     with open(checkpoint_file, "rb") as f:
         models = pickle.load(f)
 
-    # Test evaluation
+    # Held-out test evaluation (single pass)
     prospective = False
     print('----- Test Evaluation ------')
     evaluate_performance(models, xs_test, ys_test, df_cols, model_name, classification_type, prospective)
@@ -74,7 +74,7 @@ def evaluate_ensemble_xgboost(xs_test, ys_test, xs_pro, ys_pro, df_cols, classif
     # evaluate_performance(models, xs_pro_sub, ys_pro_sub, df_cols, model_name, classification_type, prospective,
     #                      shap_selected)
 
-    # Prospective evaluation
+    # Prospective evaluation (single pass)
     print('----- Prospective Evaluation ------')
     evaluate_performance(models, xs_pro, ys_pro, df_cols, model_name, classification_type, prospective)
 

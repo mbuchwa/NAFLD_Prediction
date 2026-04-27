@@ -14,6 +14,7 @@ warnings.filterwarnings('ignore')
 
 
 def hypertrain(xs_train, ys_train, xs_val, ys_val, xs_test, ys_test, xs_pro, ys_pro, df_cols, classification_type, model_name, shap_selected):
+    """Train/tune on train+val folds; keep test/prospective strictly for final single-pass evaluation."""
     if not os.path.exists(f'outputs/{model_name}'):
         os.makedirs(f'outputs/{model_name}')
     if not os.path.exists(f'models/{model_name}'):

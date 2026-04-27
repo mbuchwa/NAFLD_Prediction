@@ -3,11 +3,10 @@ from src.utils.networks import PLTabTransformer, NeuralNetwork, VI_BNN
 import shap
 from pytorch_tabular import TabularModel
 import ast
-from sklearn.model_selection import StratifiedKFold
 
 
 def evaluate_performance(models, xs_test, ys_test, df_cols, model_name, classification_type, prospective):
-    # Ensemble Prediction
+    # Single-pass ensemble prediction on the full held-out split.
     if any(substring in model_name for substring in ['svm', 'rf', 'xgb', 'light_gbm']):
         ensemble_reports, ensemble_cms, ensemble_preds, ensemble_probas, ensemble_pred_probas = \
             make_ensemble_preds(xs_test, ys_test, models)
@@ -275,7 +274,7 @@ def predict_model(data, classification_type='fibrosis', model_name='rf'):
 
 def make_ensemble_preds_pytorch(xs_test, ys_test, models, intra_model_preds=False):
     """
-    Trains m models individually on m data sets
+    Run ensemble inference once on the full held-out dataset.
     Args:
         xs_test (list): List of Test matrices.
         ys_test (list): List of Test labels.
@@ -292,91 +291,52 @@ def make_ensemble_preds_pytorch(xs_test, ys_test, models, intra_model_preds=Fals
 
     ensemble_cms = []
     ensemble_reports = []
-    ensemble_preds = []  # stores the index of predicted class
-    ensemble_probas = []  # stores the probability of the predicted class
-    ensemble_pred_probas = []  # stores the probability of both classes
+    ensemble_preds = []
+    ensemble_probas = []
+    ensemble_pred_probas = []
 
-    # Take first imputed dataset
     X_all, y_all = xs_test[0], ys_test[0]
+    if not torch.is_tensor(X_all):
+        X_all = torch.tensor(X_all)
 
-    skf = StratifiedKFold(n_splits=5)
+    y_preds_all = []
+    for model in models:
+        model.eval()
+        with torch.no_grad():
+            probas_all = model(X_all.float()).detach().cpu().numpy()
+            y_preds_all.append(probas_all)
 
-    # Perform cross-validation
-    # Use for stratified_split the train_index (length is 80% of all samples) to calculate the CMs
-    for split_index, _ in skf.split(X_all, y_all):
-        X = X_all[split_index]
-        y = y_all[split_index]
-
-        y_preds = []
-        y_preds_all = []
-
-        for model in models:
-            model.eval()  # Set model to evaluation mode
-            with torch.no_grad():
-                # Convert X to torch tensor if it's not already
-                if not torch.is_tensor(X):
-                    X = torch.tensor(X)
-                if not torch.is_tensor(X_all):
-                    X_all = torch.tensor(X_all)
-                # Perform forward pass to get probabilities
-                probas = model(X.float())  # Assuming input is float
-                probas_all = model(X_all.float())
-
-                # Convert to list of lists containing class proababilities
-                probas = probas.detach().cpu().numpy()
-                probas_all = probas_all.detach().cpu().numpy()
-                y_preds.append(probas)
-                y_preds_all.append(probas_all)
-
-            """If intra_model_preds, then redefine the ensemble reports to each model prediction on the first xs_test 
-            instead ensemble prediction on each xs_test"""
-            if intra_model_preds:
-                # ensemble_pred is now model probability instead of majority vote of models
-                ensemble_pred = probas.tolist()
-                ensemble_pred_probas.append(probas)
-
-                ensemble_pred, probas = get_index_and_proba(ensemble_pred)
-                maj_report, cm = test(y=y, y_pred=ensemble_pred)
-
-                ensemble_reports.append(maj_report)
-                ensemble_cms.append(cm)
-                ensemble_preds.append(ensemble_pred)
-                ensemble_probas.append(probas)
-
-        """If intra_model_preds, then redefine the ensemble reports to each model prediction on the first xs_test 
-        instead ensemble prediction on each xs_test"""
         if intra_model_preds:
-            return ensemble_reports, ensemble_cms, ensemble_preds, ensemble_probas, ensemble_pred_probas
+            ensemble_pred_probas.append(probas_all)
+            ensemble_pred, probas = get_index_and_proba(probas_all.tolist())
+            maj_report, cm = test(y=y_all, y_pred=ensemble_pred)
+            ensemble_reports.append(maj_report)
+            ensemble_cms.append(cm)
+            ensemble_preds.append(ensemble_pred)
+            ensemble_probas.append(probas)
 
-        """get ensemble_preds_probas on stratisfied preds for ROC curve and test"""
-        # Take majority vote or soft voting
-        ensemble_pred = majority_vote(y_preds, rule='soft')
-        ensemble_pred, probas = get_index_and_proba(ensemble_pred)
-        # Convert predicted labels to numpy array
-        ensemble_pred = np.array(ensemble_pred)
+    if intra_model_preds:
+        return ensemble_reports, ensemble_cms, ensemble_preds, ensemble_probas, ensemble_pred_probas
 
-        """get ensemble_preds_probas and ensemble_preds on all preds for ROC curve and test"""
-        ensemble_pred_all_probas = majority_vote(y_preds_all, rule='soft')
-        ensemble_pred_probas.append(ensemble_pred_all_probas)
-        ensemble_pred_all, probas_all = get_index_and_proba(ensemble_pred_all_probas)
-        # Convert predicted labels to numpy array
-        ensemble_pred_all = np.array(ensemble_pred_all)
+    ensemble_pred_all_probas = majority_vote(y_preds_all, rule='soft')
+    ensemble_pred_probas.append(ensemble_pred_all_probas)
+    ensemble_pred_all, probas_all = get_index_and_proba(ensemble_pred_all_probas)
+    ensemble_pred_all = np.array(ensemble_pred_all)
 
-        # Calculate classification report and confusion matrix
-        maj_report = classification_report(y, ensemble_pred, output_dict=True)
-        cm = confusion_matrix(y, ensemble_pred)
+    maj_report = classification_report(y_all, ensemble_pred_all, output_dict=True)
+    cm = confusion_matrix(y_all, ensemble_pred_all)
 
-        ensemble_reports.append(maj_report)
-        ensemble_cms.append(cm)
-        ensemble_preds.append(ensemble_pred_all)
-        ensemble_probas.append(probas_all)
+    ensemble_reports.append(maj_report)
+    ensemble_cms.append(cm)
+    ensemble_preds.append(ensemble_pred_all)
+    ensemble_probas.append(probas_all)
 
     return ensemble_reports, ensemble_cms, ensemble_preds, ensemble_probas, ensemble_pred_probas
 
 
 def make_ensemble_preds_gandalf(xs_test, ys_test, df_cols, models, classification_type='fibrosis', intra_model_preds=False):
     """
-    Trains m models individually on m data sets
+    Run ensemble inference once on the full held-out dataset.
     Args:
         x_test (list): List of Test matrices.
         y_test (list): List of Test labels.
@@ -395,94 +355,55 @@ def make_ensemble_preds_gandalf(xs_test, ys_test, df_cols, models, classificatio
 
     ensemble_cms = []
     ensemble_reports = []
-    ensemble_preds = []  # stores the index of predicted class
-    ensemble_probas = []  # stores the probability of the predicted class
-    ensemble_pred_probas = []  # stores the probability of both classes
+    ensemble_preds = []
+    ensemble_probas = []
+    ensemble_pred_probas = []
 
-    # Take first imputed dataset
     X_all, y_all = xs_test[0], ys_test[0]
+    test_data_all = pd.DataFrame(data=X_all, columns=df_cols)
+    test_data_all['target'] = y_all
 
-    skf = StratifiedKFold(n_splits=5)
+    y_preds_all = []
+    for model in models:
+        probas_df_all = model.predict(test_data_all)
+        if classification_type == 'three_stage':
+            probas_all = probas_df_all[['0_probability', '1_probability', '2_probability']].values.tolist()
+        else:
+            probas_all = probas_df_all[['0_probability', '1_probability']].values.tolist()
 
-    # Perform cross-validation
-    # Use for stratified_split the train_index (length is 80% of all samples) to calculate the CMs
-    for split_index, _ in skf.split(X_all, y_all):
-        X = X_all[split_index]
-        y = y_all[split_index]
+        y_preds_all.append(probas_all)
 
-        test_data_all = pd.DataFrame(data=X_all, columns=df_cols)
-        test_data_all['target'] = y_all
-
-        test_data = pd.DataFrame(data=X, columns=df_cols)
-        test_data['target'] = y
-
-        y_preds = []
-        y_preds_all = []
-
-        for model in models:
-            # Perform forward pass to get probabilities
-            probas_df = model.predict(test_data)
-            probas_df_all = model.predict(test_data_all)
-
-            # Convert to list of lists containing class proababilities
-            if classification_type == 'three_stage':
-                probas = probas_df[['0_probability', '1_probability', '2_probability']].values.tolist()
-                probas_all = probas_df_all[['0_probability', '1_probability', '2_probability']].values.tolist()
-            else:
-                probas = probas_df[['0_probability', '1_probability']].values.tolist()
-                probas_all = probas_df_all[['0_probability', '1_probability']].values.tolist()
-
-            y_preds.append(probas)
-            y_preds_all.append(probas_all)
-
-            """If intra_model_preds, then redefine the ensemble reports to each model prediction on the first xs_test 
-            instead ensemble prediction on each xs_test"""
-            if intra_model_preds:
-                # ensemble_pred is now model probability instead of majority vote of models
-                ensemble_pred_probas.append(probas)
-
-                ensemble_pred, probas = get_index_and_proba(probas)
-                maj_report, cm = test(y=y, y_pred=ensemble_pred)
-
-                ensemble_reports.append(maj_report)
-                ensemble_cms.append(cm)
-                ensemble_preds.append(ensemble_pred)
-                ensemble_probas.append(probas)
-
-        """If intra_model_preds, then redefine the ensemble reports to each model prediction on the first xs_test 
-        instead ensemble prediction on each xs_test"""
         if intra_model_preds:
-            return ensemble_reports, ensemble_cms, ensemble_preds, ensemble_probas, ensemble_pred_probas
+            ensemble_pred_probas.append(probas_all)
+            ensemble_pred, probas = get_index_and_proba(probas_all)
+            maj_report, cm = test(y=y_all, y_pred=ensemble_pred)
+            ensemble_reports.append(maj_report)
+            ensemble_cms.append(cm)
+            ensemble_preds.append(ensemble_pred)
+            ensemble_probas.append(probas)
 
-        """get ensemble_preds_probas on stratisfied preds for ROC curve and test"""
-        # Take majority vote or soft voting
-        ensemble_pred = majority_vote(y_preds, rule='soft')
-        ensemble_pred, probas = get_index_and_proba(ensemble_pred)
-        # Convert predicted labels to numpy array
-        ensemble_pred = np.array(ensemble_pred)
+    if intra_model_preds:
+        return ensemble_reports, ensemble_cms, ensemble_preds, ensemble_probas, ensemble_pred_probas
 
-        """get ensemble_preds_probas and ensemble_preds on all preds for ROC curve and test"""
-        ensemble_pred_all_probas = majority_vote(y_preds_all, rule='soft')
-        ensemble_pred_probas.append(ensemble_pred_all_probas)
-        ensemble_pred_all, probas_all = get_index_and_proba(ensemble_pred_all_probas)
-        # Convert predicted labels to numpy array
-        ensemble_pred_all = np.array(ensemble_pred_all)
+    ensemble_pred_all_probas = majority_vote(y_preds_all, rule='soft')
+    ensemble_pred_probas.append(ensemble_pred_all_probas)
+    ensemble_pred_all, probas_all = get_index_and_proba(ensemble_pred_all_probas)
+    ensemble_pred_all = np.array(ensemble_pred_all)
 
-        # Calculate classification report and confusion matrix
-        maj_report = classification_report(y, ensemble_pred, output_dict=True)
-        cm = confusion_matrix(y, ensemble_pred)
+    maj_report = classification_report(y_all, ensemble_pred_all, output_dict=True)
+    cm = confusion_matrix(y_all, ensemble_pred_all)
 
-        ensemble_reports.append(maj_report)
-        ensemble_cms.append(cm)
-        ensemble_preds.append(ensemble_pred_all)
-        ensemble_probas.append(probas_all)
+    ensemble_reports.append(maj_report)
+    ensemble_cms.append(cm)
+    ensemble_preds.append(ensemble_pred_all)
+    ensemble_probas.append(probas_all)
 
     return ensemble_reports, ensemble_cms, ensemble_preds, ensemble_probas, ensemble_pred_probas
 
 
 def make_ensemble_preds_vi_bnn(xs_test, ys_test, models, intra_model_preds=False):
     """
-    Trains m models individually on m data sets
+    Run ensemble inference once on the full held-out dataset.
     Args:
         xs_test (list): List of Test matrices.
         ys_test (list): List of Test labels.
@@ -499,84 +420,45 @@ def make_ensemble_preds_vi_bnn(xs_test, ys_test, models, intra_model_preds=False
 
     ensemble_cms = []
     ensemble_reports = []
-    ensemble_preds = []  # stores the index of predicted class
-    ensemble_probas = []  # stores the probability of the predicted class
-    ensemble_pred_probas = []  # stores the probability of both classes
+    ensemble_preds = []
+    ensemble_probas = []
+    ensemble_pred_probas = []
 
-    # Take first imputed dataset
     X_all, y_all = xs_test[0], ys_test[0]
+    if not torch.is_tensor(X_all):
+        X_all = torch.tensor(X_all, device=get_device(i=0))
 
-    skf = StratifiedKFold(n_splits=5)
+    y_preds_all = []
+    for model in models:
+        model.eval()
+        with torch.no_grad():
+            probas_all = model(X_all.float()).detach().cpu().numpy()
+            y_preds_all.append(probas_all)
 
-    # Perform cross-validation
-    # Use for stratified_split the train_index (length is 80% of all samples) to calculate the CMs
-    for split_index, _ in skf.split(X_all, y_all):
-        X = X_all[split_index]
-        y = y_all[split_index]
-
-        y_preds = []
-        y_preds_all = []
-
-        for model in models:
-            model.eval()  # Set model to evaluation mode
-            with torch.no_grad():
-                # Convert X to torch tensor if it's not already
-                if not torch.is_tensor(X):
-                    X = torch.tensor(X, device=get_device(i=0))
-                if not torch.is_tensor(X_all):
-                    X_all = torch.tensor(X_all, device=get_device(i=0))
-                # Perform forward pass to get probabilities
-                probas = model(X.float())  # Assuming input is float
-                probas_all = model(X_all.float())
-
-                # Convert to list of lists containing class proababilities
-                probas = probas.detach().cpu().numpy()
-                probas_all = probas_all.detach().cpu().numpy()
-                y_preds.append(probas)
-                y_preds_all.append(probas_all)
-
-            """If intra_model_preds, then redefine the ensemble reports to each model prediction on the first xs_test 
-            instead ensemble prediction on each xs_test"""
-            if intra_model_preds:
-                # ensemble_pred is now model probability instead of majority vote of models
-                ensemble_pred = probas.tolist()
-                ensemble_pred_probas.append(probas)
-
-                ensemble_pred, probas = get_index_and_proba(ensemble_pred)
-                maj_report, cm = test(y=y, y_pred=ensemble_pred)
-
-                ensemble_reports.append(maj_report)
-                ensemble_cms.append(cm)
-                ensemble_preds.append(ensemble_pred)
-                ensemble_probas.append(probas)
-
-        """If intra_model_preds, then redefine the ensemble reports to each model prediction on the first xs_test 
-        instead ensemble prediction on each xs_test"""
         if intra_model_preds:
-            return ensemble_reports, ensemble_cms, ensemble_preds, ensemble_probas, ensemble_pred_probas
+            ensemble_pred_probas.append(probas_all)
+            ensemble_pred, probas = get_index_and_proba(probas_all.tolist())
+            maj_report, cm = test(y=y_all, y_pred=ensemble_pred)
+            ensemble_reports.append(maj_report)
+            ensemble_cms.append(cm)
+            ensemble_preds.append(ensemble_pred)
+            ensemble_probas.append(probas)
 
-        """get ensemble_preds_probas on stratisfied preds for ROC curve and test"""
-        # Take majority vote or soft voting
-        ensemble_pred = majority_vote(y_preds, rule='soft')
-        ensemble_pred, probas = get_index_and_proba(ensemble_pred)
-        # Convert predicted labels to numpy array
-        ensemble_pred = np.array(ensemble_pred)
+    if intra_model_preds:
+        return ensemble_reports, ensemble_cms, ensemble_preds, ensemble_probas, ensemble_pred_probas
 
-        """get ensemble_preds_probas and ensemble_preds on all preds for ROC curve and test"""
-        ensemble_pred_all_probas = majority_vote(y_preds_all, rule='soft')
-        ensemble_pred_probas.append(ensemble_pred_all_probas)
-        ensemble_pred_all, probas_all = get_index_and_proba(ensemble_pred_all_probas)
-        # Convert predicted labels to numpy array
-        ensemble_pred_all = np.array(ensemble_pred_all)
+    ensemble_pred_all_probas = majority_vote(y_preds_all, rule='soft')
+    ensemble_pred_probas.append(ensemble_pred_all_probas)
+    ensemble_pred_all, probas_all = get_index_and_proba(ensemble_pred_all_probas)
+    ensemble_pred_all = np.array(ensemble_pred_all)
 
-        # Calculate classification report and confusion matrix
-        maj_report = classification_report(y, ensemble_pred, output_dict=True)
-        cm = confusion_matrix(y, ensemble_pred)
+    maj_report = classification_report(y_all, ensemble_pred_all, output_dict=True)
+    cm = confusion_matrix(y_all, ensemble_pred_all)
 
-        ensemble_reports.append(maj_report)
-        ensemble_cms.append(cm)
-        ensemble_preds.append(ensemble_pred_all)
-        ensemble_probas.append(probas_all)
+    ensemble_reports.append(maj_report)
+    ensemble_cms.append(cm)
+    ensemble_preds.append(ensemble_pred_all)
+    ensemble_probas.append(probas_all)
 
     return ensemble_reports, ensemble_cms, ensemble_preds, ensemble_probas, ensemble_pred_probas
 
@@ -788,7 +670,7 @@ def predict_vi_bnn_models(data, classification_type='fibrosis'):
 
 def make_ensemble_preds_tab_transformer(xs_test, ys_test, models, intra_model_preds=False):
     """
-    Trains m models individually on m data sets
+    Run ensemble inference once on the full held-out dataset.
     Args:
         x_test (list): List of Test matrices.
         y_test (list): List of Test labels.
@@ -805,76 +687,41 @@ def make_ensemble_preds_tab_transformer(xs_test, ys_test, models, intra_model_pr
 
     ensemble_cms = []
     ensemble_reports = []
-    ensemble_preds = []  # stores the index of predicted class
-    ensemble_probas = []  # stores the probability of the predicted class
-    ensemble_pred_probas = []  # stores the probability of both classes
+    ensemble_preds = []
+    ensemble_probas = []
+    ensemble_pred_probas = []
 
-    # Take first imputed dataset
     X_all, y_all = xs_test[0], ys_test[0]
+    x_tensor_all = torch.tensor(X_all, dtype=torch.float32)
+    y_preds_all = []
 
-    skf = StratifiedKFold(n_splits=5)
+    for model in models:
+        probas_all = model(x_tensor_all).detach().cpu().numpy()
+        y_preds_all.append(probas_all)
 
-    # Perform cross-validation
-    # Use for stratified_split the train_index (length is 80% of all samples) to calculate the CMs
-    for split_index, _ in skf.split(X_all, y_all):
-        X = X_all[split_index]
-        y = y_all[split_index]
-
-        y_preds = []
-        y_preds_all = []
-
-        for model in models:
-            # Perform forward pass to get probabilities
-            probas = model(torch.tensor(X, dtype=torch.float32))
-            probas_all = model(torch.tensor(X_all, dtype=torch.float32))
-
-            # Convert to list of lists containing class proababilities
-            probas = probas.detach().cpu().numpy()
-            probas_all = probas_all.detach().cpu().numpy()
-            y_preds.append(probas)
-            y_preds_all.append(probas_all)
-
-            """If intra_model_preds, then redefine the ensemble reports to each model prediction on the first xs_test 
-            instead ensemble prediction on each xs_test"""
-            if intra_model_preds:
-                # ensemble_pred is now model probability instead of majority vote of models
-                ensemble_pred = probas.tolist()
-                ensemble_pred_probas.append(probas)
-
-                ensemble_pred, probas = get_index_and_proba(ensemble_pred)
-                maj_report, cm = test(y=y, y_pred=ensemble_pred)
-
-                ensemble_reports.append(maj_report)
-                ensemble_cms.append(cm)
-                ensemble_preds.append(ensemble_pred)
-                ensemble_probas.append(probas)
-
-        """If intra_model_preds, then redefine the ensemble reports to each model prediction on the first xs_test 
-        instead ensemble prediction on each xs_test"""
         if intra_model_preds:
-            return ensemble_reports, ensemble_cms, ensemble_preds, ensemble_probas, ensemble_pred_probas
+            ensemble_pred_probas.append(probas_all)
+            ensemble_pred, probas = get_index_and_proba(probas_all.tolist())
+            maj_report, cm = test(y=y_all, y_pred=ensemble_pred)
+            ensemble_reports.append(maj_report)
+            ensemble_cms.append(cm)
+            ensemble_preds.append(ensemble_pred)
+            ensemble_probas.append(probas)
 
-        """get ensemble_preds_probas on stratisfied preds for ROC curve and test"""
-        # Take majority vote or soft voting
-        ensemble_pred = majority_vote(y_preds, rule='soft')
-        ensemble_pred, probas = get_index_and_proba(ensemble_pred)
-        # Convert predicted labels to numpy array
-        ensemble_pred = np.array(ensemble_pred)
+    if intra_model_preds:
+        return ensemble_reports, ensemble_cms, ensemble_preds, ensemble_probas, ensemble_pred_probas
 
-        """get ensemble_preds_probas and ensemble_preds on all preds for ROC curve and test"""
-        ensemble_pred_all_probas = majority_vote(y_preds_all, rule='soft')
-        ensemble_pred_probas.append(ensemble_pred_all_probas)
-        ensemble_pred_all, probas_all = get_index_and_proba(ensemble_pred_all_probas)
-        # Convert predicted labels to numpy array
-        ensemble_pred_all = np.array(ensemble_pred_all)
+    ensemble_pred_all_probas = majority_vote(y_preds_all, rule='soft')
+    ensemble_pred_probas.append(ensemble_pred_all_probas)
+    ensemble_pred_all, probas_all = get_index_and_proba(ensemble_pred_all_probas)
+    ensemble_pred_all = np.array(ensemble_pred_all)
 
-        # Calculate classification report and confusion matrix
-        maj_report = classification_report(y, ensemble_pred, output_dict=True)
-        cm = confusion_matrix(y, ensemble_pred)
+    maj_report = classification_report(y_all, ensemble_pred_all, output_dict=True)
+    cm = confusion_matrix(y_all, ensemble_pred_all)
 
-        ensemble_reports.append(maj_report)
-        ensemble_cms.append(cm)
-        ensemble_preds.append(ensemble_pred_all)
-        ensemble_probas.append(probas_all)
+    ensemble_reports.append(maj_report)
+    ensemble_cms.append(cm)
+    ensemble_preds.append(ensemble_pred_all)
+    ensemble_probas.append(probas_all)
 
     return ensemble_reports, ensemble_cms, ensemble_preds, ensemble_probas, ensemble_pred_probas

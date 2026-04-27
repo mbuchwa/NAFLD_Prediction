@@ -15,36 +15,37 @@ warnings.filterwarnings('ignore')
 
 
 def testing(xs_test, ys_test, xs_pro, ys_pro, df_cols, classification_type, model_name, shap_selected):
+    """Run one-time held-out evaluation without any test-set re-splitting."""
     if not os.path.exists(f'outputs/{model_name}'):
         os.makedirs(f'outputs/{model_name}')
     if not os.path.exists(f'models/{model_name}'):
         os.makedirs(f'models/{model_name}')
 
-    # Hypertrain TabTransformer
+    # Evaluate TabTransformer
     if model_name == 'tab_transformer':
         evaluate_ensemble_tab_transformer(xs_test, ys_test, xs_pro, ys_pro, df_cols, classification_type, shap_selected)
 
-    # Hypertrain XGBoost
+    # Evaluate XGBoost
     if model_name == 'xgb':
         evaluate_ensemble_xgboost(xs_test, ys_test, xs_pro, ys_pro, df_cols, classification_type, shap_selected)
 
-    # Hypertrain LightGBM
+    # Evaluate LightGBM
     if model_name == 'light_gbm':
         evaluate_ensemble_light_gbm(xs_test, ys_test, xs_pro, ys_pro, df_cols, classification_type, shap_selected)
 
-    # Hypertrain VI_BNN
+    # Evaluate VI_BNN
     elif model_name == 'vi_bnn':
         evaluate_ensemble_vi_bnn(xs_test, ys_test, xs_pro, ys_pro, df_cols, classification_type, shap_selected)
 
-    # Hypertrain Feed Forward Neural Network
+    # Evaluate Feed Forward Neural Network
     elif model_name == 'ffn':
         evaluate_ensemble_ffn(xs_test, ys_test, xs_pro, ys_pro, df_cols, classification_type, shap_selected)
 
-    # Hypertrain SVM
+    # Evaluate SVM
     elif model_name == 'svm':
         evaluate_ensemble_svm(xs_test, ys_test, xs_pro, ys_pro, df_cols, classification_type, shap_selected)
 
-    # Hypertrain RF
+    # Evaluate RF
     elif model_name == 'rf':
         evaluate_ensemble_rf(xs_test, ys_test, xs_pro, ys_pro, df_cols, classification_type, shap_selected)
 

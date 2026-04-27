@@ -62,12 +62,12 @@ def evaluate_ensemble_gandalf(xs_test, ys_test, xs_pro, ys_pro, df_cols, classif
         model = TabularModel.load_model(f'models/{model_name}/{checkpoint_file}')
         models.append(model)
 
-    # Test evaluation
+    # Held-out test evaluation (single pass)
     prospective = False
     print('----- Test Evaluation ------')
     evaluate_performance(models, xs_test, ys_test, df_cols, model_name, classification_type, prospective)
 
-    # Prospective evaluation
+    # Prospective evaluation (single pass)
     prospective = True
     print('----- Prospective Evaluation ------')
     evaluate_performance(models, xs_pro, ys_pro, df_cols, model_name, classification_type, prospective)

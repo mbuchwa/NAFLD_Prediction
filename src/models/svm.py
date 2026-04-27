@@ -30,7 +30,7 @@ def hypertrain_ensemble_svm(xs_train, ys_train, xs_val, ys_val, xs_test, ys_test
         interpret(xs_train[0], xs_test[0], df_cols, classification_type=classification_type, model_name=model_name)
 
     if testing:
-        # Optionally test immediately after training
+        # Optionally run single-pass held-out evaluation after training
         evaluate_ensemble_svm(xs_test, ys_test, xs_pro, ys_pro, df_cols, classification_type, shap_selected)
 
 
