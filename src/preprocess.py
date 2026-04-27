@@ -25,6 +25,13 @@ METHOD_APPLIED_SUBSTITUTE_HALF_LOD = 'substitute_censored_values_with_lod_half'
 METHOD_APPLIED_REMOVE = 'remove_censored_values_set_nan'
 METHOD_APPLIED_NONE = 'no_censored_values_detected'
 
+# Manuscript-ready method strings to keep reporting text identical to implementation.
+MANUSCRIPT_METHOD_SUBSTITUTE_LOD = 'Censored values were substituted with the reported LOD.'
+MANUSCRIPT_METHOD_SUBSTITUTE_HALF_LOD = 'Censored values below the LOD were substituted with LOD/2.'
+MANUSCRIPT_METHOD_REMOVE = 'Censored values were removed by setting them to missing (NaN), with per-feature counts tracked.'
+
+CENSORED_VALUES_SUMMARY_PATH = Path('outputs/data_qc/censored_values_summary.csv')
+
 
 def create_scores(df_pro):
     mapping = {
@@ -998,8 +1005,6 @@ def clean_df(df):
     indices_list, values_list = [], []
     censored_summary_rows = []
 
-    df = df[cols]
-
     # Function does not do anything, but removes a datetime column so astype(float) works
     # df = keep_samples_three_months(df)
 
@@ -1008,11 +1013,13 @@ def clean_df(df):
 
     df.loc[:, 'Micro'] = pd.to_numeric(df['Micro'], errors='coerce')
 
-    # Scan all laboratory features for censored values encoded with < or > operators
-    lab_cols = [col for col in cols if col not in ['Age', 'Micro']]
-    operator_cols = lab_cols
-
     df = df.astype(str)
+
+    # Scan all laboratory features in the input frame (not only the model-feature subset).
+    operator_cols = [
+        col for col in df.columns
+        if col not in ['Age', 'Micro', 'index', 'Patientennummer', 'Biopsie', 'Blutentnahme']
+    ]
 
     for operator_col in operator_cols:
         df, indices, values, n_censored, method_applied = handle_operator(
@@ -1046,7 +1053,10 @@ def clean_df(df):
     # There are some 'neg' values for PTT
     df = df.replace('neg', np.nan)
 
-    summary_path = Path(__file__).resolve().parents[1] / 'outputs' / 'data_qc' / 'censored_values_summary.csv'
+    # Keep only model features after global censored-value handling.
+    df = df[cols]
+
+    summary_path = Path(__file__).resolve().parents[1] / CENSORED_VALUES_SUMMARY_PATH
     summary_path.parent.mkdir(parents=True, exist_ok=True)
     pd.DataFrame(censored_summary_rows).to_csv(summary_path, index=False)
 
