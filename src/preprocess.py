@@ -14,6 +14,17 @@ from src.utils.plots import *
 
 pd.options.mode.chained_assignment = None
 
+# Censored-value handling policy constants (for implementation + manuscript parity)
+CENSORED_POLICY_SUBSTITUTE_LOD = 'substitute_with_lod'
+CENSORED_POLICY_SUBSTITUTE_HALF_LOD = 'substitute_with_lod_half'
+CENSORED_POLICY_REMOVE = 'remove_with_tracked_counts'
+CENSORED_VALUE_POLICY = CENSORED_POLICY_REMOVE
+
+METHOD_APPLIED_SUBSTITUTE_LOD = 'substitute_censored_values_with_lod'
+METHOD_APPLIED_SUBSTITUTE_HALF_LOD = 'substitute_censored_values_with_lod_half'
+METHOD_APPLIED_REMOVE = 'remove_censored_values_set_nan'
+METHOD_APPLIED_NONE = 'no_censored_values_detected'
+
 
 def create_scores(df_pro):
     mapping = {
@@ -869,6 +880,7 @@ def clean_df(df):
     ]
 
     indices_list, values_list = [], []
+    censored_summary_rows = []
 
     df = df[cols]
 
@@ -880,15 +892,26 @@ def clean_df(df):
 
     df.loc[:, 'Micro'] = pd.to_numeric(df['Micro'], errors='coerce')
 
-    operator_cols = ['GRF (berechnet) (ml/min)', 'ALAT (U/I)', 'Quick (%)', 'HbA1c (%)']
+    # Scan all laboratory features for censored values encoded with < or > operators
+    lab_cols = [col for col in cols if col not in ['Age', 'Micro']]
+    operator_cols = lab_cols
 
     df = df.astype(str)
 
     for operator_col in operator_cols:
-        df, indices, values = handle_operator(df, operator_col)
+        df, indices, values, n_censored, method_applied = handle_operator(
+            df=df,
+            col=operator_col,
+            policy=CENSORED_VALUE_POLICY
+        )
 
         indices_list.append(indices)
         values_list.append(values)
+        censored_summary_rows.append({
+            'feature': operator_col,
+            'n_censored': n_censored,
+            'method_applied': method_applied
+        })
 
     def delete_after_whitespace(entry):
         return entry.split(maxsplit=1)[0]
@@ -906,6 +929,10 @@ def clean_df(df):
     df = df.replace('32.420.2.)', 32.4)
     # There are some 'neg' values for PTT
     df = df.replace('neg', np.nan)
+
+    summary_path = Path(__file__).resolve().parents[1] / 'outputs' / 'data_qc' / 'censored_values_summary.csv'
+    summary_path.parent.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame(censored_summary_rows).to_csv(summary_path, index=False)
 
     return df, (indices_list, values_list, operator_cols)
 
@@ -930,7 +957,7 @@ def drop_rows_with_high_missing_data(df, missing_data_threshold=0.70):
     return df_cleaned
 
 
-def handle_operator(df, col):
+def handle_operator(df, col, policy=CENSORED_VALUE_POLICY):
     """
     Handle operator symbols (<, >) present in the specified column of the DataFrame.
 
@@ -939,17 +966,49 @@ def handle_operator(df, col):
         col (str): Name of the column where operator symbols need to be handled.
 
     Returns:
-        DataFrame: DataFrame with operator symbols replaced with NaN in the specified column.
+        DataFrame: DataFrame with censored values handled based on the active policy.
         array-like: Indices of rows where operator symbols were found.
         DataFrame: Subset of DataFrame containing rows with operator symbols in the specified column.
+        int: Number of censored entries in this feature.
+        str: Method string describing how censored entries were handled.
     """
-    indices = df[df[col].str.contains('<|>', case=False)].index
-    values = df[df[col].str.contains('<|>', case=False)]
+    col_as_str = df[col].astype(str)
+    censored_mask = col_as_str.str.contains(r'[<>≤≥]', case=False, regex=True, na=False)
+    indices = df[censored_mask].index
+    values = df[censored_mask].copy()
+    n_censored = int(censored_mask.sum())
 
-    # Replace entries with "<" or ">" with NaN
-    df.loc[df[col].str.contains('<|>', case=False), col] = np.nan
+    if n_censored == 0:
+        return df, indices, values, n_censored, METHOD_APPLIED_NONE
 
-    return df, indices, values
+    if policy == CENSORED_POLICY_REMOVE:
+        df.loc[censored_mask, col] = np.nan
+        method_applied = METHOD_APPLIED_REMOVE
+    elif policy in [CENSORED_POLICY_SUBSTITUTE_LOD, CENSORED_POLICY_SUBSTITUTE_HALF_LOD]:
+        extracted = col_as_str[censored_mask].str.extract(r'([<>≤≥])\s*(-?\d+(?:[.,]\d+)?)')
+
+        for idx, (operator, lod_raw) in extracted.iterrows():
+            if pd.isna(lod_raw):
+                df.at[idx, col] = np.nan
+                continue
+
+            lod_value = float(str(lod_raw).replace(',', '.'))
+            if policy == CENSORED_POLICY_SUBSTITUTE_LOD:
+                replacement = lod_value
+            else:
+                replacement = lod_value / 2.0 if operator in ['<', '≤'] else lod_value
+
+            df.at[idx, col] = replacement
+
+        method_applied = (
+            METHOD_APPLIED_SUBSTITUTE_LOD
+            if policy == CENSORED_POLICY_SUBSTITUTE_LOD
+            else METHOD_APPLIED_SUBSTITUTE_HALF_LOD
+        )
+    else:
+        raise ValueError(f'Unsupported censored-value policy: {policy}')
+
+    return df, indices, values, n_censored, method_applied
 
 
 def mice(data, m) -> pd.DataFrame:
