@@ -38,7 +38,8 @@ def create_scores(df_pro):
     return df_pro
 
 
-def preprare_data(classification_type, shap_selected, scaling, finetune=False, select_patients=False, smote=False):
+def preprare_data(classification_type, shap_selected, scaling, finetune=False, select_patients=False, smote=False,
+                  window_days_pre=None, window_days_post=0):
     # Load data
     if finetune:
         df = pd.read_excel('../data/20240813-FibrosisDB(302_Patients).xlsx')
@@ -92,28 +93,44 @@ def preprare_data(classification_type, shap_selected, scaling, finetune=False, s
 
     if finetune:
         xs_train, ys_train, df_cols, scaler = preprocess(train_df, 'train_ft', classification_type=classification_type,
-                                                         scaling=scaling, scaler=None, shap_selected=shap_selected)
+                                                         scaling=scaling, scaler=None, shap_selected=shap_selected,
+                                                         window_days_pre=window_days_pre,
+                                                         window_days_post=window_days_post)
         xs_val, ys_val, df_cols, scaler = preprocess(val_df, 'val_ft', classification_type=classification_type,
-                                                     scaling=scaling, scaler=scaler, shap_selected=shap_selected)
+                                                     scaling=scaling, scaler=scaler, shap_selected=shap_selected,
+                                                     window_days_pre=window_days_pre,
+                                                     window_days_post=window_days_post)
         xs_test, ys_test, df_cols, scaler = preprocess(test_df, 'test_ft', classification_type=classification_type,
-                                                       scaling=scaling, scaler=scaler, shap_selected=shap_selected)
+                                                       scaling=scaling, scaler=scaler, shap_selected=shap_selected,
+                                                       window_days_pre=window_days_pre,
+                                                       window_days_post=window_days_post)
 
         xs_test_umm, ys_test_umm, df_cols_umm, scaler = preprocess(test_df_umm, 'test',
                                                                    classification_type=classification_type,
                                                                    scaling=scaling, scaler=scaler,
-                                                                   shap_selected=shap_selected)
+                                                                   shap_selected=shap_selected,
+                                                                   window_days_pre=window_days_pre,
+                                                                   window_days_post=window_days_post)
 
     else:
         xs_train, ys_train, df_cols, scaler = preprocess(train_df, 'train', classification_type=classification_type,
-                                                         scaling=scaling, scaler=None, shap_selected=shap_selected)
+                                                         scaling=scaling, scaler=None, shap_selected=shap_selected,
+                                                         window_days_pre=window_days_pre,
+                                                         window_days_post=window_days_post)
         xs_val, ys_val, df_cols, scaler = preprocess(val_df, 'val', classification_type=classification_type,
-                                                     scaling=scaling, scaler=scaler, shap_selected=shap_selected)
+                                                     scaling=scaling, scaler=scaler, shap_selected=shap_selected,
+                                                     window_days_pre=window_days_pre,
+                                                     window_days_post=window_days_post)
         xs_test, ys_test, df_cols, scaler = preprocess(test_df, 'test', classification_type=classification_type,
-                                                       scaling=scaling, scaler=scaler, shap_selected=shap_selected)
+                                                       scaling=scaling, scaler=scaler, shap_selected=shap_selected,
+                                                       window_days_pre=window_days_pre,
+                                                       window_days_post=window_days_post)
 
         xs_pro, ys_pro, df_cols, scaler = preprocess(df_pro, 'prospective', classification_type=classification_type,
                                                      scaling=scaling, scaler=scaler, shap_selected=shap_selected,
-                                                    select_closest_patients_from_mainz=select_patients, smote=smote)
+                                                    select_closest_patients_from_mainz=select_patients, smote=smote,
+                                                    window_days_pre=window_days_pre,
+                                                    window_days_post=window_days_post)
 
     # concat all data files to one processed_data csv
     merged_no_mice_df = pd.concat([pd.read_csv(f'../data/preprocessed_no_mice_train/train_{classification_type}.csv'),
@@ -179,7 +196,8 @@ def preprare_data(classification_type, shap_selected, scaling, finetune=False, s
 
 
 def temporal_filter_pre_biopsy_labs(df, biopsy_date_col='Biopsie', lab_date_col='Blutentnahme',
-                                    patient_id_col=None, include_same_day=False, pre_biopsy_window_days=None,
+                                    patient_id_col=None, include_same_day=False, window_days_pre=None,
+                                    window_days_post=0,
                                     summary_output_path='outputs/data_qc/lab_timing_summary.csv'):
     """
     Keep only nearest pre-biopsy laboratory record per patient and persist timing QC counts.
@@ -190,7 +208,8 @@ def temporal_filter_pre_biopsy_labs(df, biopsy_date_col='Biopsie', lab_date_col=
         lab_date_col (str): Column containing lab measurement date.
         patient_id_col (str|None): Patient identifier column. If None, tries common ID columns.
         include_same_day (bool): Include same-day lab results (lab_date == biopsy_date).
-        pre_biopsy_window_days (int|None): Optional window (days) for "within-window" counting.
+        window_days_pre (int|None): Optional pre-biopsy lookback window in days.
+        window_days_post (int): Optional post-biopsy look-forward window in days.
         summary_output_path (str): Output path for timing summary CSV and JSON artifacts.
 
     Returns:
@@ -221,19 +240,22 @@ def temporal_filter_pre_biopsy_labs(df, biopsy_date_col='Biopsie', lab_date_col=
     valid_dates = df['biopsy_date_dt'].notna() & df['lab_date_dt'].notna()
     same_day_mask = valid_dates & (df['lab_date_dt'].dt.normalize() == df['biopsy_date_dt'].dt.normalize())
 
+    day_offset = (df['lab_date_dt'] - df['biopsy_date_dt']).dt.total_seconds() / 86400
+    pre_lower_bound = -window_days_pre if window_days_pre is not None else -np.inf
+    post_upper_bound = window_days_post if window_days_post is not None else 0
+
     if include_same_day:
-        eligible_mask = valid_dates & (df['lab_date_dt'] <= df['biopsy_date_dt'])
+        boundary_mask = (day_offset >= pre_lower_bound) & (day_offset <= post_upper_bound)
     else:
-        eligible_mask = valid_dates & (df['lab_date_dt'] < df['biopsy_date_dt'])
+        boundary_mask = (day_offset >= pre_lower_bound) & (day_offset <= post_upper_bound) & (day_offset != 0)
+
+    eligible_mask = valid_dates & boundary_mask
 
     eligible_df = df.loc[eligible_mask].copy()
     eligible_df['time_to_biopsy_days'] = (eligible_df['biopsy_date_dt'] - eligible_df['lab_date_dt']).dt.total_seconds() / 86400
     eligible_df['abs_time_to_biopsy_days'] = eligible_df['time_to_biopsy_days'].abs()
 
-    if pre_biopsy_window_days is None:
-        within_window_count = int(len(eligible_df))
-    else:
-        within_window_count = int((eligible_df['time_to_biopsy_days'] <= pre_biopsy_window_days).sum())
+    within_window_count = int(len(eligible_df))
 
     if patient_id_col and patient_id_col in eligible_df.columns:
         pre_counts = eligible_df.groupby(patient_id_col).size()
@@ -261,7 +283,8 @@ def temporal_filter_pre_biopsy_labs(df, biopsy_date_col='Biopsie', lab_date_col=
     return filtered_df, audit_counts
 
 def preprocess(df, data_type='train', classification_type='fibrosis', scaling=False, scaler=None,
-               shap_selected=False, select_closest_patients_from_mainz=False, smote=False):
+               shap_selected=False, select_closest_patients_from_mainz=False, smote=False,
+               window_days_pre=None, window_days_post=0):
     """
     Main function for preprocessing. Preprocesses the data.
     Args:
@@ -285,7 +308,11 @@ def preprocess(df, data_type='train', classification_type='fibrosis', scaling=Fa
     df = df.reset_index()
 
     # Temporal filtering: keep nearest pre-biopsy laboratory row per patient
-    df, timing_audit_counts = temporal_filter_pre_biopsy_labs(df)
+    df, timing_audit_counts = temporal_filter_pre_biopsy_labs(
+        df,
+        window_days_pre=window_days_pre,
+        window_days_post=window_days_post
+    )
     print(f"Timing QC ({data_type}): {timing_audit_counts}")
 
     # Convert age from birth data
