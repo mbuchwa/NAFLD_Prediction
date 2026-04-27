@@ -3,6 +3,70 @@ from src.utils.networks import PLTabTransformer, NeuralNetwork, VI_BNN
 import shap
 from pytorch_tabular import TabularModel
 import ast
+import json
+from sklearn.metrics import brier_score_loss
+from sklearn.calibration import calibration_curve
+from sklearn.linear_model import LogisticRegression
+
+
+def _compute_external_calibration_stats(y_true, y_pred_proba):
+    """
+    Compute calibration diagnostics for binary predictions on external data.
+    """
+    y_true = np.asarray(y_true)
+    y_pred_proba = np.asarray(y_pred_proba)
+    positive_proba = y_pred_proba[:, 1]
+    clipped_proba = np.clip(positive_proba, 1e-6, 1 - 1e-6)
+    logit_proba = np.log(clipped_proba / (1 - clipped_proba)).reshape(-1, 1)
+
+    recalibration_model = LogisticRegression(
+        fit_intercept=True,
+        penalty='l2',
+        C=1e6,
+        solver='lbfgs',
+        max_iter=2000
+    )
+    recalibration_model.fit(logit_proba, y_true)
+
+    calibration_slope = float(recalibration_model.coef_[0][0])
+    calibration_intercept = float(recalibration_model.intercept_[0])
+    brier = float(brier_score_loss(y_true, positive_proba))
+
+    frac_pos, mean_pred = calibration_curve(y_true, positive_proba, n_bins=10, strategy='quantile')
+
+    return {
+        'brier_score': brier,
+        'calibration_slope': calibration_slope,
+        'calibration_intercept': calibration_intercept,
+        'mean_predicted_probability': mean_pred.tolist(),
+        'fraction_of_positives': frac_pos.tolist()
+    }
+
+
+def _save_external_calibration_artifacts(calibration_stats, model_name, classification_type):
+    output_dir = f'outputs/{model_name}/prospective'
+    os.makedirs(output_dir, exist_ok=True)
+
+    plt.figure(figsize=(7, 7))
+    plt.plot(
+        calibration_stats['mean_predicted_probability'],
+        calibration_stats['fraction_of_positives'],
+        marker='o',
+        linewidth=2,
+        label='Model'
+    )
+    plt.plot([0, 1], [0, 1], linestyle='--', color='gray', label='Perfect calibration')
+    plt.xlabel('Mean predicted probability')
+    plt.ylabel('Observed event rate')
+    plt.title(f'Calibration curve ({classification_type})')
+    plt.legend(loc='best')
+    plt.tight_layout()
+    plt.savefig(f'{output_dir}/calibration_curve.png', dpi=300)
+    plt.close()
+
+    calibration_stats_path = f'{output_dir}/{classification_type}_calibration_stats.json'
+    with open(calibration_stats_path, 'w') as f:
+        json.dump(calibration_stats, f, indent=2)
 
 
 def evaluate_performance(models, xs_test, ys_test, df_cols, model_name, classification_type, prospective):
@@ -52,6 +116,17 @@ def evaluate_performance(models, xs_test, ys_test, df_cols, model_name, classifi
             for (cm, report) in zip(ensemble_cms, ensemble_reports):
                 f.write(str(report))
                 f.write(str(cm))
+
+    if prospective and classification_type != 'three_stage':
+        calibration_stats = _compute_external_calibration_stats(
+            y_true=ys_test[0],
+            y_pred_proba=ensemble_pred_probas[0]
+        )
+        _save_external_calibration_artifacts(
+            calibration_stats=calibration_stats,
+            model_name=model_name,
+            classification_type=classification_type
+        )
 
     pooled_metrics = pool_classification_metrics_with_rubins_rules(
         reports=ensemble_reports,
