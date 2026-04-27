@@ -1,0 +1,10 @@
+model,tuned_params,ranges,search_strategy,optimization_metric,number_of_trials
+SVM,degree,"degree: [2, 3, 4]",RandomizedSearchCV with PredefinedSplit,neg_log_loss,10
+RandomForest,"n_estimators, max_depth, min_samples_split, min_samples_leaf, bootstrap","n_estimators: 10..100 step 10; max_depth: None or 2..10; min_samples_split: {2,5,10}; min_samples_leaf: {1,2,4}; bootstrap: {True,False}",RandomizedSearchCV with PredefinedSplit,neg_log_loss,10
+XGBoost,"max_depth, learning_rate, subsample","max_depth: 1..39; learning_rate: linspace(0.5,0.01,5); subsample: linspace(1.0,0.3,5)",RandomizedSearchCV (5-fold CV),neg_log_loss,10
+LightGBM,"max_depth, learning_rate, subsample","max_depth: 1..39; learning_rate: linspace(0.5,0.01,5); subsample: linspace(1.0,0.3,5)",RandomizedSearchCV (5-fold CV),accuracy (three_stage) or neg_mean_squared_error (binary tasks),10
+Feedforward NN,"lr, dropout, num_layers, hidden_dim","lr: linspace(0.005,0.0005,5); dropout: linspace(0.3,0.0,5); num_layers: 3..6; hidden_dim: {32,64,128,256}",Manual random search with KFold CV,mean validation accuracy,10
+VI-BNN,"lr, dropout, num_layers, hidden_dim","lr: linspace(0.01,0.001,2); dropout: linspace(0.2,0.0,2); num_layers: 1..2; hidden_dim: {32,64}",Manual random search using hold-out validation,validation accuracy,5
+MCMC-BNN,"num_layers, hidden_dim","num_layers: 1..2; hidden_dim: {32,64}",Manual random search with hold-out validation,classification report accuracy,5
+GANDALF,"learning_rate, gflu_dropout, gflu_stages","learning_rate: linspace(0.01,0.0001,5); gflu_dropout: linspace(0.5,0.0,5); gflu_stages: 2..6",Manual random search with KFold CV,mean validation accuracy,30
+TabTransformer,"lr, dropout, num_layers, hidden_dim","lr: linspace(0.005,0.0001,5); dropout: linspace(0.5,0.0,5); num_layers: 2..6; hidden_dim: {32,64,128,256}",Manual random search with KFold CV,mean validation accuracy,30

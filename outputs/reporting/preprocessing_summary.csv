@@ -1,0 +1,6 @@
+sequence_order,stage,implementation_summary,source
+1,cleaning,"Temporal filtering to nearest pre-biopsy lab, age derivation, string cleanup, censored-value handling (default: set to NaN), decimal normalization, and invalid token replacement.","src/preprocess.py::preprocess(), clean_df(), handle_operator()"
+2,missing-data handling,Rows with missing target (Micro) are removed; rows with >70% missing features are dropped via thresholded row-wise filtering.,"src/preprocess.py::preprocess(), drop_rows_with_high_missing_data()"
+3,imputation,Multiple Imputation by Chained Equations (IterativeImputer) with sample_posterior=True; 10 imputed datasets are created with random_state in [0..9] and min_value=0.,src/preprocess.py::mice()
+4,scaling/encoding,Target is encoded via categorize_micro() to task labels; optional StandardScaler is fit on training imputation and applied to downstream splits.,"src/preprocess.py::preprocess(), categorize_micro()"
+5,outlier policy,No explicit winsorization/clipping/IQR outlier removal is implemented; extreme or censored operator values are handled through censored-value policy in cleaning.,"src/preprocess.py::clean_df(), handle_operator()"

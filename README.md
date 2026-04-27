@@ -13,7 +13,8 @@ Bei Fragen, bitte eine Mail an [Marcus Buchwald](mailto:marcus.buchwald@medma.un
 5. [Output](#Output)
 6. [Pip-Installierung](#Pip-Installierung)
 7. [Docker-Installierung](#Docker-Installierung)
-8. [TO-DOs](#TO-DOs)
+8. [Scope](#Scope)
+9. [TO-DOs](#TO-DOs)
 
 --------------------- 
 
@@ -171,6 +172,20 @@ sudo systemctl daemon-reload
 ```
 sudo systemctl restart docker
 ```
+
+
+--------------------- 
+
+## Scope <a name="Scope"></a>
+
+Dieses Repository deckt die in den Manuskript-Analysen beschriebenen Kernfähigkeiten ab:
+- Vollständige Datenvorverarbeitung für Retrospektiv- und Prospektivkohorten (Cleaning, Missing-Data-Handling, MICE-Imputation, optionale Skalierung).
+- Modelltraining und Evaluation für mehrere Modellklassen (SVM, RF, XGB, LightGBM, MLP/FFN, BNN-Varianten, GANDALF, TabTransformer).
+- Reproduzierbare Reporting-Artefakte unter `outputs/reporting/`, inkl.
+  - `preprocessing_summary.csv` (sequenzielle Vorverarbeitungsschritte)
+  - `hyperparameter_search_summary.csv` (modellweise Hyperparametersuche).
+
+Damit ist der Fokus klar auf klassifikationsorientierte NAFLD-Liver-Staging-Workflows und deren nachvollziehbare Dokumentation ausgerichtet; zusätzliche klinische Endpunkte außerhalb dieser Pipeline sind nicht Teil dieses Codes.
 
 --------------------- 
 
