@@ -43,10 +43,10 @@ def hypertrain_ensemble_tab_transformer(xs_train, ys_train, xs_val, ys_val, xs_t
 
     # Optionally evaluate models
     if testing:
-        evaluate_ensemble_tab_transformer(xs_test, ys_test, xs_pro, ys_pro, df_cols, classification_type, shap_selected)
+        evaluate_ensemble_tab_transformer(xs_test, ys_test, xs_pro, ys_pro, xs_val, ys_val, df_cols, classification_type, shap_selected)
 
 
-def evaluate_ensemble_tab_transformer(xs_test, ys_test, xs_pro, ys_pro, df_cols, classification_type, shap_selected,
+def evaluate_ensemble_tab_transformer(xs_test, ys_test, xs_pro, ys_pro, xs_val, ys_val, df_cols, classification_type, shap_selected,
                                       model_name='tab_transformer'):
     models = []
     model_name = f'{model_name}_shap_selected' if shap_selected else model_name
@@ -59,12 +59,12 @@ def evaluate_ensemble_tab_transformer(xs_test, ys_test, xs_pro, ys_pro, df_cols,
     # Held-out test evaluation (single pass)
     prospective = False
     print('----- Test Evaluation ------')
-    evaluate_performance(models, xs_test, ys_test, df_cols, model_name, classification_type, prospective)
+    evaluate_performance(models, xs_test, ys_test, df_cols, model_name, classification_type, prospective, xs_val=xs_val, ys_val=ys_val)
 
     # Prospective evaluation (single pass)
     prospective = True
     print('----- Prospective Evaluation ------')
-    evaluate_performance(models, xs_pro, ys_pro, df_cols, model_name, classification_type, prospective)
+    evaluate_performance(models, xs_pro, ys_pro, df_cols, model_name, classification_type, prospective, xs_val=xs_val, ys_val=ys_val)
 
 
 def finetune_ensemble_tab_transformer(xs_finetune, ys_finetune, xs_val, ys_val, xs_test, ys_test, xs_pro, ys_pro,
@@ -137,7 +137,7 @@ def finetune_ensemble_tab_transformer(xs_finetune, ys_finetune, xs_val, ys_val, 
 
     # Optionally evaluate models
     if testing:
-        evaluate_ensemble_tab_transformer(xs_test, ys_test, xs_pro, ys_pro, df_cols, classification_type, shap_selected,
+        evaluate_ensemble_tab_transformer(xs_test, ys_test, xs_pro, ys_pro, xs_val, ys_val, df_cols, classification_type, shap_selected,
                                           model_name=model_name + '_finetuned')
 
 

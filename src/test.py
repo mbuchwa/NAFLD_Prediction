@@ -18,7 +18,7 @@ from src.utils.ger_eng_dict import dict_germ_eng
 warnings.filterwarnings('ignore')
 
 
-def testing(xs_test, ys_test, xs_pro, ys_pro, df_cols, classification_type, model_name, shap_selected):
+def testing(xs_test, ys_test, xs_pro, ys_pro, xs_val, ys_val, df_cols, classification_type, model_name, shap_selected):
     """Run one-time held-out evaluation without any test-set re-splitting."""
     if not os.path.exists(f'outputs/{model_name}'):
         os.makedirs(f'outputs/{model_name}')
@@ -27,34 +27,34 @@ def testing(xs_test, ys_test, xs_pro, ys_pro, df_cols, classification_type, mode
 
     # Evaluate TabTransformer
     if model_name == 'tab_transformer':
-        evaluate_ensemble_tab_transformer(xs_test, ys_test, xs_pro, ys_pro, df_cols, classification_type, shap_selected)
+        evaluate_ensemble_tab_transformer(xs_test, ys_test, xs_pro, ys_pro, xs_val, ys_val, df_cols, classification_type, shap_selected)
 
     # Evaluate XGBoost
     if model_name == 'xgb':
-        evaluate_ensemble_xgboost(xs_test, ys_test, xs_pro, ys_pro, df_cols, classification_type, shap_selected)
+        evaluate_ensemble_xgboost(xs_test, ys_test, xs_pro, ys_pro, xs_val, ys_val, df_cols, classification_type, shap_selected)
 
     # Evaluate LightGBM
     if model_name == 'light_gbm':
-        evaluate_ensemble_light_gbm(xs_test, ys_test, xs_pro, ys_pro, df_cols, classification_type, shap_selected)
+        evaluate_ensemble_light_gbm(xs_test, ys_test, xs_pro, ys_pro, xs_val, ys_val, df_cols, classification_type, shap_selected)
 
     # Evaluate VI_BNN
     elif model_name == 'vi_bnn':
-        evaluate_ensemble_vi_bnn(xs_test, ys_test, xs_pro, ys_pro, df_cols, classification_type, shap_selected)
+        evaluate_ensemble_vi_bnn(xs_test, ys_test, xs_pro, ys_pro, xs_val, ys_val, df_cols, classification_type, shap_selected)
 
     # Evaluate Feed Forward Neural Network
     elif model_name == 'ffn':
-        evaluate_ensemble_ffn(xs_test, ys_test, xs_pro, ys_pro, df_cols, classification_type, shap_selected)
+        evaluate_ensemble_ffn(xs_test, ys_test, xs_pro, ys_pro, xs_val, ys_val, df_cols, classification_type, shap_selected)
 
     # Evaluate SVM
     elif model_name == 'svm':
-        evaluate_ensemble_svm(xs_test, ys_test, xs_pro, ys_pro, df_cols, classification_type, shap_selected)
+        evaluate_ensemble_svm(xs_test, ys_test, xs_pro, ys_pro, xs_val, ys_val, df_cols, classification_type, shap_selected)
 
     # Evaluate RF
     elif model_name == 'rf':
-        evaluate_ensemble_rf(xs_test, ys_test, xs_pro, ys_pro, df_cols, classification_type, shap_selected)
+        evaluate_ensemble_rf(xs_test, ys_test, xs_pro, ys_pro, xs_val, ys_val, df_cols, classification_type, shap_selected)
 
     elif model_name == 'gandalf':
-        evaluate_ensemble_gandalf(xs_test, ys_test, xs_pro, ys_pro, df_cols, classification_type, shap_selected)
+        evaluate_ensemble_gandalf(xs_test, ys_test, xs_pro, ys_pro, xs_val, ys_val, df_cols, classification_type, shap_selected)
 
 
 def export_external_class_prevalence(ys_external, output_path='outputs/external/class_prevalence.csv'):
@@ -110,7 +110,7 @@ if __name__ == '__main__':
             "Set `smote = False` in src/test.py."
         )
 
-    _, _, _, _, xs_test, ys_test, xs_pro, ys_pro, df_cols = preprare_data(classification_type, shap_selected, scaling,
+    _, _, xs_val, ys_val, xs_test, ys_test, xs_pro, ys_pro, df_cols = preprare_data(classification_type, shap_selected, scaling,
                                                                           select_patients=select_patients, smote=smote)
 
     export_external_class_prevalence(ys_pro, output_path='outputs/external/class_prevalence.csv')
@@ -120,5 +120,5 @@ if __name__ == '__main__':
     print(f'\n ----- Testing model {model_name} | Task {classification_type} ----- \n')
     print('-------------------------------------------')
 
-    testing(xs_test, ys_test, xs_pro, ys_pro, df_cols=df_cols, classification_type=classification_type,
+    testing(xs_test, ys_test, xs_pro, ys_pro, xs_val, ys_val, df_cols=df_cols, classification_type=classification_type,
             model_name=model_name, shap_selected=shap_selected)

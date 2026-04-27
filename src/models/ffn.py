@@ -38,10 +38,10 @@ def hypertrain_ensemble_ffn(xs_train, ys_train, xs_val, ys_val, xs_test, ys_test
 
     # Optionally run single-pass held-out evaluation
     if testing:
-        evaluate_ensemble_ffn(xs_test, ys_test, xs_pro, ys_pro, df_cols, classification_type, shap_selected)
+        evaluate_ensemble_ffn(xs_test, ys_test, xs_pro, ys_pro, xs_val, ys_val, df_cols, classification_type, shap_selected)
 
 
-def evaluate_ensemble_ffn(xs_test, ys_test, xs_pro, ys_pro, df_cols, classification_type, shap_selected,
+def evaluate_ensemble_ffn(xs_test, ys_test, xs_pro, ys_pro, xs_val, ys_val, df_cols, classification_type, shap_selected,
                           model_name='ffn'):
     model_name = f'{model_name}_shap_selected' if shap_selected else model_name
 
@@ -54,12 +54,12 @@ def evaluate_ensemble_ffn(xs_test, ys_test, xs_pro, ys_pro, df_cols, classificat
     # Test evaluation
     prospective = False
     print('----- Test Evaluation ------')
-    evaluate_performance(models, xs_test, ys_test, df_cols, model_name, classification_type, prospective)
+    evaluate_performance(models, xs_test, ys_test, df_cols, model_name, classification_type, prospective, xs_val=xs_val, ys_val=ys_val)
 
     # Prospective evaluation
     prospective = True
     print('----- Prospective Evaluation ------')
-    evaluate_performance(models, xs_pro, ys_pro, df_cols, model_name, classification_type, prospective)
+    evaluate_performance(models, xs_pro, ys_pro, df_cols, model_name, classification_type, prospective, xs_val=xs_val, ys_val=ys_val)
 
 
 def hypertrain_pytorch_model(x_train, y_train, x_val, y_val, cv=5, n_iter=10, max_epochs=100, early_stopping_rounds=30,

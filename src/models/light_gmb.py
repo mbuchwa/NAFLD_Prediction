@@ -32,11 +32,11 @@ def hypertrain_ensemble_light_gbm(xs_train, ys_train, xs_val, ys_val, xs_test, y
 
     # Optionally run single-pass held-out evaluation
     if testing:
-        evaluate_ensemble_light_gbm(xs_test, ys_test, xs_pro, ys_pro, df_cols, classification_type, shap_selected,
+        evaluate_ensemble_light_gbm(xs_test, ys_test, xs_pro, ys_pro, xs_val, ys_val, df_cols, classification_type, shap_selected,
                                     model_name=model_name)
 
 
-def evaluate_ensemble_light_gbm(xs_test, ys_test, xs_pro, ys_pro, df_cols, classification_type, shap_selected,
+def evaluate_ensemble_light_gbm(xs_test, ys_test, xs_pro, ys_pro, xs_val, ys_val, df_cols, classification_type, shap_selected,
                                 model_name='light_gbm'):
 
     if 'shap_selected' not in model_name and shap_selected:
@@ -52,12 +52,12 @@ def evaluate_ensemble_light_gbm(xs_test, ys_test, xs_pro, ys_pro, df_cols, class
     # Test evaluation
     prospective = False
     print('----- Test Evaluation ------')
-    evaluate_performance(models, xs_test, ys_test, df_cols, model_name, classification_type, prospective)
+    evaluate_performance(models, xs_test, ys_test, df_cols, model_name, classification_type, prospective, xs_val=xs_val, ys_val=ys_val)
 
     # Prospective evaluation
     prospective = True
     print('----- Prospective Evaluation ------')
-    evaluate_performance(models, xs_pro, ys_pro, df_cols, model_name, classification_type, prospective)
+    evaluate_performance(models, xs_pro, ys_pro, df_cols, model_name, classification_type, prospective, xs_val=xs_val, ys_val=ys_val)
 
 
 def finetune_ensemble_light_gbm(xs_finetune, ys_finetune, xs_val, ys_val, xs_test, ys_test, xs_pro, ys_pro, df_cols,
@@ -120,7 +120,7 @@ def finetune_ensemble_light_gbm(xs_finetune, ys_finetune, xs_val, ys_val, xs_tes
 
     # Optionally run single-pass held-out evaluation
     if testing:
-        evaluate_ensemble_light_gbm(xs_test, ys_test, xs_pro, ys_pro, df_cols, classification_type, shap_selected,
+        evaluate_ensemble_light_gbm(xs_test, ys_test, xs_pro, ys_pro, xs_val, ys_val, df_cols, classification_type, shap_selected,
                                     model_name=model_name + '_finetuned')
 
 

@@ -7,6 +7,7 @@ import json
 from sklearn.metrics import brier_score_loss
 from sklearn.calibration import calibration_curve
 from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import roc_auc_score
 
 
 def _compute_external_calibration_stats(y_true, y_pred_proba):
@@ -69,7 +70,155 @@ def _save_external_calibration_artifacts(calibration_stats, model_name, classifi
         json.dump(calibration_stats, f, indent=2)
 
 
-def evaluate_performance(models, xs_test, ys_test, df_cols, model_name, classification_type, prospective):
+def _calc_binary_operating_metrics(y_true, positive_scores, threshold):
+    y_true = np.asarray(y_true).astype(int)
+    scores = np.asarray(positive_scores).astype(float)
+    y_pred = (scores >= float(threshold)).astype(int)
+
+    tn = np.sum((y_true == 0) & (y_pred == 0))
+    fp = np.sum((y_true == 0) & (y_pred == 1))
+    fn = np.sum((y_true == 1) & (y_pred == 0))
+    tp = np.sum((y_true == 1) & (y_pred == 1))
+
+    sensitivity = tp / (tp + fn) if (tp + fn) > 0 else np.nan
+    specificity = tn / (tn + fp) if (tn + fp) > 0 else np.nan
+    ppv = tp / (tp + fp) if (tp + fp) > 0 else np.nan
+    npv = tn / (tn + fn) if (tn + fn) > 0 else np.nan
+    return {
+        'Sensitivity': float(sensitivity),
+        'Specificity': float(specificity),
+        'PPV': float(ppv),
+        'NPV': float(npv),
+    }
+
+
+def _bootstrap_ci(metric_fn, n=1000, seed=42):
+    rng = np.random.default_rng(seed)
+    values = []
+    for _ in range(n):
+        sampled_value = metric_fn(rng)
+        if sampled_value is None or np.isnan(sampled_value):
+            continue
+        values.append(float(sampled_value))
+    if len(values) == 0:
+        return float('nan'), float('nan')
+    return float(np.percentile(values, 2.5)), float(np.percentile(values, 97.5))
+
+
+def _youden_threshold(y_true, positive_scores):
+    y_true = np.asarray(y_true).astype(int)
+    scores = np.asarray(positive_scores).astype(float)
+    thresholds = np.unique(scores)
+    if thresholds.size == 0:
+        return 0.5
+
+    best_thr = 0.5
+    best_youden = -np.inf
+    for thr in thresholds:
+        metrics = _calc_binary_operating_metrics(y_true, scores, thr)
+        if np.isnan(metrics['Sensitivity']) or np.isnan(metrics['Specificity']):
+            continue
+        youden = metrics['Sensitivity'] + metrics['Specificity'] - 1.0
+        if youden > best_youden:
+            best_youden = youden
+            best_thr = float(thr)
+    return best_thr
+
+
+def _format_metric_line(name, value, ci_lower, ci_upper):
+    return f'{name}: {value:.4f} (95% bootstrap CI {ci_lower:.4f}-{ci_upper:.4f})'
+
+
+def _evaluate_binary_with_threshold(y_true, y_pred_proba, threshold, bootstrap_n=1000):
+    y_true = np.asarray(y_true).astype(int)
+    y_pred_proba = np.asarray(y_pred_proba)
+    positive_scores = y_pred_proba[:, 1]
+    n = y_true.shape[0]
+
+    auc_val = float(roc_auc_score(y_true, positive_scores))
+
+    def auc_bootstrap(rng):
+        idx = rng.integers(0, n, n)
+        if len(np.unique(y_true[idx])) < 2:
+            return None
+        return roc_auc_score(y_true[idx], positive_scores[idx])
+
+    auc_ci = _bootstrap_ci(auc_bootstrap, n=bootstrap_n)
+    op_metrics = _calc_binary_operating_metrics(y_true, positive_scores, threshold)
+    op_cis = {}
+
+    for metric_name in ['Sensitivity', 'Specificity', 'PPV', 'NPV']:
+        def metric_bootstrap(rng, mn=metric_name):
+            idx = rng.integers(0, n, n)
+            return _calc_binary_operating_metrics(y_true[idx], positive_scores[idx], threshold)[mn]
+        op_cis[metric_name] = _bootstrap_ci(metric_bootstrap, n=bootstrap_n)
+
+    return {
+        'threshold': float(threshold),
+        'auroc': auc_val,
+        'auroc_ci_lower': auc_ci[0],
+        'auroc_ci_upper': auc_ci[1],
+        'operating_metrics': op_metrics,
+        'operating_cis': op_cis,
+    }
+
+
+def _evaluate_multiclass_ovr(y_true, y_pred_proba, thresholds, bootstrap_n=1000):
+    y_true = np.asarray(y_true).astype(int)
+    y_pred_proba = np.asarray(y_pred_proba)
+    n = y_true.shape[0]
+    n_classes = y_pred_proba.shape[1]
+    rows = []
+    for class_idx in range(n_classes):
+        class_name = {0: 'F0-1', 1: 'F2', 2: 'F3-4'}.get(class_idx, f'class_{class_idx}')
+        y_bin = (y_true == class_idx).astype(int)
+        scores = y_pred_proba[:, class_idx]
+        threshold = float(thresholds[class_idx])
+
+        if len(np.unique(y_bin)) < 2:
+            auroc = np.nan
+            auroc_ci = (np.nan, np.nan)
+        else:
+            auroc = float(roc_auc_score(y_bin, scores))
+
+            def auc_bootstrap(rng):
+                idx = rng.integers(0, n, n)
+                if len(np.unique(y_bin[idx])) < 2:
+                    return None
+                return roc_auc_score(y_bin[idx], scores[idx])
+
+            auroc_ci = _bootstrap_ci(auc_bootstrap, n=bootstrap_n)
+
+        metrics = _calc_binary_operating_metrics(y_bin, scores, threshold)
+        metric_cis = {}
+        for metric_name in ['Sensitivity', 'Specificity', 'PPV', 'NPV']:
+            def metric_bootstrap(rng, mn=metric_name):
+                idx = rng.integers(0, n, n)
+                return _calc_binary_operating_metrics(y_bin[idx], scores[idx], threshold)[mn]
+            metric_cis[metric_name] = _bootstrap_ci(metric_bootstrap, n=bootstrap_n)
+
+        row = {
+            'class_index': class_idx,
+            'class_name': class_name,
+            'threshold': threshold,
+            'auroc_ovr': auroc,
+            'auroc_ci_lower': auroc_ci[0],
+            'auroc_ci_upper': auroc_ci[1],
+        }
+        for metric_name, metric_val in metrics.items():
+            row[metric_name.lower()] = metric_val
+            row[f'{metric_name.lower()}_ci_lower'] = metric_cis[metric_name][0]
+            row[f'{metric_name.lower()}_ci_upper'] = metric_cis[metric_name][1]
+        rows.append(row)
+    return rows
+
+
+def _get_eval_output_dir(model_name, prospective):
+    return f'outputs/{model_name}/prospective' if prospective else f'outputs/{model_name}'
+
+
+def evaluate_performance(models, xs_test, ys_test, df_cols, model_name, classification_type, prospective,
+                         xs_val=None, ys_val=None):
     # Single-pass ensemble prediction on the full held-out split.
     if any(substring in model_name for substring in ['svm', 'rf', 'xgb', 'light_gbm']):
         ensemble_reports, ensemble_cms, ensemble_preds, ensemble_probas, ensemble_pred_probas = \
@@ -97,6 +246,67 @@ def evaluate_performance(models, xs_test, ys_test, df_cols, model_name, classifi
 
     r, _ = test(y=ys_test[0], y_pred=ensemble_preds[0])
     print('Results on one data set: ', r)
+
+    # Determine a fixed operating threshold on validation data once, then apply to held-out data.
+    if xs_val is not None and ys_val is not None:
+        if any(substring in model_name for substring in ['svm', 'rf', 'xgb', 'light_gbm']):
+            _, _, _, _, val_pred_probas = make_ensemble_preds(xs_val, ys_val, models)
+        elif 'ffn' in model_name:
+            _, _, _, _, val_pred_probas = make_ensemble_preds_pytorch(xs_val, ys_val, models)
+        elif 'gandalf' in model_name:
+            _, _, _, _, val_pred_probas = make_ensemble_preds_gandalf(xs_val, ys_val, df_cols, models)
+        elif 'tab_transformer' in model_name:
+            _, _, _, _, val_pred_probas = make_ensemble_preds_tab_transformer(xs_val, ys_val, models)
+        elif 'vi_bnn' in model_name:
+            _, _, _, _, val_pred_probas = make_ensemble_preds_vi_bnn(xs_val, ys_val, models)
+        else:
+            val_pred_probas = None
+    else:
+        val_pred_probas = None
+
+    if val_pred_probas is None:
+        print('Validation probabilities unavailable; defaulting threshold estimation to current evaluation split.')
+        val_y_ref = ys_test[0]
+        val_proba_ref = np.asarray(ensemble_pred_probas[0])
+    else:
+        val_y_ref = ys_val[0]
+        val_proba_ref = np.asarray(val_pred_probas[0])
+
+    eval_y_ref = ys_test[0]
+    eval_proba_ref = np.asarray(ensemble_pred_probas[0])
+    output_dir = _get_eval_output_dir(model_name, prospective)
+    os.makedirs(output_dir, exist_ok=True)
+
+    threshold_metrics_lines = []
+    if eval_proba_ref.shape[1] == 2:
+        operating_threshold = _youden_threshold(val_y_ref, val_proba_ref[:, 1])
+        binary_eval = _evaluate_binary_with_threshold(eval_y_ref, eval_proba_ref, operating_threshold, bootstrap_n=1000)
+        threshold_metrics_lines.append(f'Operating threshold (Youden, validation): {binary_eval["threshold"]:.4f}')
+        threshold_metrics_lines.append(_format_metric_line('AUROC', binary_eval['auroc'],
+                                                           binary_eval['auroc_ci_lower'],
+                                                           binary_eval['auroc_ci_upper']))
+        for metric_name in ['Sensitivity', 'Specificity', 'PPV', 'NPV']:
+            val = binary_eval['operating_metrics'][metric_name]
+            ci_lower, ci_upper = binary_eval['operating_cis'][metric_name]
+            threshold_metrics_lines.append(_format_metric_line(metric_name, val, ci_lower, ci_upper))
+    else:
+        class_thresholds = {class_idx: _youden_threshold((np.asarray(val_y_ref) == class_idx).astype(int),
+                                                         val_proba_ref[:, class_idx])
+                            for class_idx in range(eval_proba_ref.shape[1])}
+        multiclass_rows = _evaluate_multiclass_ovr(eval_y_ref, eval_proba_ref, class_thresholds, bootstrap_n=1000)
+        threshold_metrics_lines.append('One-vs-rest AUROC and operating-point metrics (thresholds from validation Youden):')
+        for row in multiclass_rows:
+            threshold_metrics_lines.append(
+                f"Class {row['class_name']} (thr={row['threshold']:.4f}) "
+                f"AUROC={row['auroc_ovr']:.4f} "
+                f"[{row['auroc_ci_lower']:.4f}, {row['auroc_ci_upper']:.4f}] "
+                f"Sens={row['sensitivity']:.4f} Spec={row['specificity']:.4f} "
+                f"PPV={row['ppv']:.4f} NPV={row['npv']:.4f}"
+            )
+        if classification_type == 'three_stage':
+            subgroup_df = pd.DataFrame(multiclass_rows)
+            subgroup_path = f'{output_dir}/{model_name}_{classification_type}_subgroup_metrics_table.csv'
+            subgroup_df.to_csv(subgroup_path, index=False)
 
     if prospective is True:
         with open(f'outputs/{model_name}/prospective/{model_name}_{classification_type}_ensemble_preds.txt', 'w') as f:
@@ -141,6 +351,7 @@ def evaluate_performance(models, xs_test, ys_test, df_cols, model_name, classifi
             f"within_var={values['within_var']:.6f}, between_var={values['between_var']:.6f})"
         )
     performance_string = '\n'.join(performance_lines) + '\n'
+    performance_string += '\n'.join(threshold_metrics_lines) + '\n'
 
     print(performance_string)
 
