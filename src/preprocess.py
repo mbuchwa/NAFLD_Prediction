@@ -302,6 +302,93 @@ def temporal_filter_pre_biopsy_labs(df, biopsy_date_col='Biopsie', lab_date_col=
     return filtered_df, audit_counts
 
 
+def _feature_missingness_percent(df):
+    """
+    Compute per-feature missingness percentages for a dataframe.
+    """
+    if df.empty:
+        return pd.Series(dtype=float)
+    return (df.isna().mean() * 100.0).astype(float)
+
+
+def export_missingness_profile(before_df, after_df, output_dir='outputs/data_qc',
+                               filename='missingness_profile.csv', flag_threshold=20.0):
+    """
+    Export feature-wise missingness percentages before and after cleaning.
+
+    Args:
+        before_df (pd.DataFrame): Dataframe before cleaning and row-level missingness exclusion.
+        after_df (pd.DataFrame): Dataframe after cleaning and row-level missingness exclusion.
+        output_dir (str): Output directory.
+        filename (str): Missingness CSV filename.
+        flag_threshold (float): Threshold (%) used to flag features with high missingness.
+
+    Returns:
+        pd.DataFrame: Missingness comparison table.
+    """
+    before_missingness = _feature_missingness_percent(before_df)
+    after_missingness = _feature_missingness_percent(after_df)
+
+    all_features = sorted(set(before_missingness.index).union(set(after_missingness.index)))
+    summary_df = pd.DataFrame({
+        'feature': all_features,
+        'missingness_before_cleaning_pct': [before_missingness.get(col, np.nan) for col in all_features],
+        'missingness_after_cleaning_pct': [after_missingness.get(col, np.nan) for col in all_features]
+    })
+
+    summary_df['flag_gt_20pct_before'] = summary_df['missingness_before_cleaning_pct'] > flag_threshold
+    summary_df['flag_gt_20pct_after'] = summary_df['missingness_after_cleaning_pct'] > flag_threshold
+    summary_df = summary_df.sort_values(by='missingness_before_cleaning_pct', ascending=False).reset_index(drop=True)
+
+    output_base = Path(__file__).resolve().parents[1] / output_dir
+    output_base.mkdir(parents=True, exist_ok=True)
+    summary_df.to_csv(output_base / filename, index=False)
+    return summary_df
+
+
+def export_missingness_assumptions_template(output_dir='outputs/data_qc',
+                                            filename='missingness_assumptions.md'):
+    """
+    Export a concise markdown template to document missingness assumptions and exclusions rationale.
+    """
+    assumptions_template = """# Missingness Assumptions Report Template
+
+## Dataset / Extraction Context
+- Dataset version:
+- Extraction date:
+- Analyst:
+- Cohort definition:
+
+## Missingness Mechanism Assessment (MCAR / MAR / MNAR)
+For each key feature with notable missingness, document the likely mechanism and rationale.
+
+| Feature | Missingness % (before cleaning) | Likely Mechanism (MCAR/MAR/MNAR) | Rationale / Evidence | Planned Handling |
+|---|---:|---|---|---|
+| example_feature | 0.0 | MCAR | Replace with cohort-specific rationale. | Impute / Exclude / Model-based |
+
+## Features Flagged >20% Missingness
+- Summarize patterns from `missingness_profile.csv`:
+- Clinical or operational explanation:
+- Bias risk and downstream model implications:
+
+## Justification for >70% Row Exclusion Threshold
+- Threshold used in preprocessing: rows with >70% missing values are excluded.
+- Why this threshold is reasonable for this cohort:
+- Sensitivity analysis plan (e.g., 60% / 80% thresholds):
+- Impact on cohort size and representativeness:
+
+## Validation / Sensitivity Checks
+- Compare model performance with and without high-missingness rows:
+- Check whether exclusions disproportionately affect subgroups:
+- Record final decision and sign-off:
+"""
+
+    output_base = Path(__file__).resolve().parents[1] / output_dir
+    output_base.mkdir(parents=True, exist_ok=True)
+    with open(output_base / filename, 'w', encoding='utf-8') as f:
+        f.write(assumptions_template)
+
+
 def export_patient_attrition(df, output_dir='outputs/data_qc', window_days_pre=None, window_days_post=0):
     """
     Build and export patient attrition counts aligned with manuscript flow-diagram wording.
@@ -342,11 +429,24 @@ def export_patient_attrition(df, output_dir='outputs/data_qc', window_days_pre=N
     after_required_biopsy_lab_linkage = cohort_count(linkage_df)
 
     missingness_df = calculate_age(linkage_df.copy())
+    missingness_before_cleaning = missingness_df.copy()
     missingness_df, _ = clean_df(missingness_df)
     missingness_df = missingness_df.astype(float)
     missingness_df = missingness_df.dropna(subset=['Micro'])
     missingness_df = drop_rows_with_high_missing_data(missingness_df)
     after_missingness_exclusions = cohort_count(missingness_df)
+
+    export_missingness_profile(
+        before_df=missingness_before_cleaning,
+        after_df=missingness_df,
+        output_dir=output_dir,
+        filename='missingness_profile.csv',
+        flag_threshold=20.0
+    )
+    export_missingness_assumptions_template(
+        output_dir=output_dir,
+        filename='missingness_assumptions.md'
+    )
 
     final_df = missingness_df.copy()
     if 'Micro' in final_df.columns:
