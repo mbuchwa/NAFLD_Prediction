@@ -342,9 +342,14 @@ def export_missingness_profile(before_df, after_df, output_dir='outputs/data_qc'
         'missingness_before_cleaning_pct': [before_missingness.get(col, np.nan) for col in all_features],
         'missingness_after_cleaning_pct': [after_missingness.get(col, np.nan) for col in all_features]
     })
+    # Backward-compatibility alias used by downstream scripts.
+    summary_df['biomarker'] = summary_df['feature']
 
     summary_df['flag_gt_20pct_before'] = summary_df['missingness_before_cleaning_pct'] > flag_threshold
     summary_df['flag_gt_20pct_after'] = summary_df['missingness_after_cleaning_pct'] > flag_threshold
+    summary_df['missingness_delta_pct_points'] = (
+        summary_df['missingness_after_cleaning_pct'] - summary_df['missingness_before_cleaning_pct']
+    )
     summary_df = summary_df.sort_values(by='missingness_before_cleaning_pct', ascending=False).reset_index(drop=True)
 
     output_base = Path(__file__).resolve().parents[1] / output_dir
@@ -358,7 +363,7 @@ def export_missingness_assumptions_template(output_dir='outputs/data_qc',
     """
     Export a concise markdown template to document missingness assumptions and exclusions rationale.
     """
-    assumptions_template = """# Missingness Assumptions Report Template
+    assumptions_template = """# Missingness Assumptions Report Template (Short)
 
 ## Dataset / Extraction Context
 - Dataset version:
@@ -367,14 +372,14 @@ def export_missingness_assumptions_template(output_dir='outputs/data_qc',
 - Cohort definition:
 
 ## Missingness Mechanism Assessment (MCAR / MAR / MNAR)
-For each key feature with notable missingness, document the likely mechanism and rationale.
+Document likely mechanisms for high-missingness features from `missingness_profile.csv`.
 
 | Feature | Missingness % (before cleaning) | Likely Mechanism (MCAR/MAR/MNAR) | Rationale / Evidence | Planned Handling |
 |---|---:|---|---|---|
 | example_feature | 0.0 | MCAR | Replace with cohort-specific rationale. | Impute / Exclude / Model-based |
 
 ## Features Flagged >20% Missingness
-- Summarize patterns from `missingness_profile.csv`:
+- List flagged features (`flag_gt_20pct_before` and/or `flag_gt_20pct_after`):
 - Clinical or operational explanation:
 - Bias risk and downstream model implications:
 
