@@ -30,7 +30,7 @@ def hypertrain_ensemble_light_gbm(xs_train, ys_train, xs_val, ys_val, xs_test, y
     if interpret_model:
         interpret(xs_train[0], xs_test[0], df_cols, classification_type=classification_type, model_name=model_name)
 
-    # Optionally evaluate models
+    # Optionally run single-pass held-out evaluation
     if testing:
         evaluate_ensemble_light_gbm(xs_test, ys_test, xs_pro, ys_pro, df_cols, classification_type, shap_selected,
                                     model_name=model_name)
@@ -118,7 +118,7 @@ def finetune_ensemble_light_gbm(xs_finetune, ys_finetune, xs_val, ys_val, xs_tes
         interpret(xs_finetune[0], xs_test[0], df_cols, classification_type=classification_type,
                   model_name=model_name + '_finetuned')
 
-    # Optionally evaluate models
+    # Optionally run single-pass held-out evaluation
     if testing:
         evaluate_ensemble_light_gbm(xs_test, ys_test, xs_pro, ys_pro, df_cols, classification_type, shap_selected,
                                     model_name=model_name + '_finetuned')

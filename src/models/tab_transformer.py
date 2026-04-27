@@ -56,12 +56,12 @@ def evaluate_ensemble_tab_transformer(xs_test, ys_test, xs_pro, ys_pro, df_cols,
         model = load_pytorch_model(checkpoint_file, classification_type, model_name, df_cols=df_cols)
         models.append(model)
 
-    # Test evaluation
+    # Held-out test evaluation (single pass)
     prospective = False
     print('----- Test Evaluation ------')
     evaluate_performance(models, xs_test, ys_test, df_cols, model_name, classification_type, prospective)
 
-    # Prospective evaluation
+    # Prospective evaluation (single pass)
     prospective = True
     print('----- Prospective Evaluation ------')
     evaluate_performance(models, xs_pro, ys_pro, df_cols, model_name, classification_type, prospective)
