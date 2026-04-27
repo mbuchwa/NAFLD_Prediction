@@ -1,7 +1,11 @@
 from sklearn.model_selection import train_test_split
 from sklearn.experimental import enable_iterative_imputer
 from sklearn.impute import IterativeImputer
+import json
+import os
+from pathlib import Path
 import pandas as pd
+import numpy as np
 from sklearn.metrics import classification_report, confusion_matrix
 import pickle
 from src.select_test_datasets import *
@@ -173,6 +177,89 @@ def preprare_data(classification_type, shap_selected, scaling, finetune=False, s
         return xs_train, ys_train, xs_val, ys_val, xs_test, ys_test, xs_test_umm, ys_test_umm, df_cols
 
 
+
+def temporal_filter_pre_biopsy_labs(df, biopsy_date_col='Biopsie', lab_date_col='Blutentnahme',
+                                    patient_id_col=None, include_same_day=False, pre_biopsy_window_days=None,
+                                    summary_output_path='outputs/data_qc/lab_timing_summary.csv'):
+    """
+    Keep only nearest pre-biopsy laboratory record per patient and persist timing QC counts.
+
+    Args:
+        df (pd.DataFrame): Raw dataframe containing at least biopsy and lab date columns.
+        biopsy_date_col (str): Column containing biopsy date.
+        lab_date_col (str): Column containing lab measurement date.
+        patient_id_col (str|None): Patient identifier column. If None, tries common ID columns.
+        include_same_day (bool): Include same-day lab results (lab_date == biopsy_date).
+        pre_biopsy_window_days (int|None): Optional window (days) for "within-window" counting.
+        summary_output_path (str): Output path for timing summary CSV and JSON artifacts.
+
+    Returns:
+        tuple[pd.DataFrame, dict]: Filtered dataframe and QC counts dictionary.
+    """
+    df = df.copy()
+
+    if biopsy_date_col not in df.columns or lab_date_col not in df.columns:
+        audit_counts = {
+            'same_day_count': 0,
+            'within_window_count': 0,
+            'multiple_pre_biopsy_count': 0
+        }
+        summary_path = Path(summary_output_path)
+        summary_path.parent.mkdir(parents=True, exist_ok=True)
+        pd.DataFrame([audit_counts]).to_csv(summary_path, index=False)
+        with open(summary_path.with_suffix('.json'), 'w', encoding='utf-8') as f:
+            json.dump(audit_counts, f, indent=2)
+        return df, audit_counts
+
+    if patient_id_col is None:
+        candidate_id_cols = ['Patient_ID', 'PatientID', 'patient_id', 'ID', 'PatID', 'Lfd. Nr.']
+        patient_id_col = next((col for col in candidate_id_cols if col in df.columns), None)
+
+    df['biopsy_date_dt'] = pd.to_datetime(df[biopsy_date_col], errors='coerce')
+    df['lab_date_dt'] = pd.to_datetime(df[lab_date_col], errors='coerce')
+
+    valid_dates = df['biopsy_date_dt'].notna() & df['lab_date_dt'].notna()
+    same_day_mask = valid_dates & (df['lab_date_dt'].dt.normalize() == df['biopsy_date_dt'].dt.normalize())
+
+    if include_same_day:
+        eligible_mask = valid_dates & (df['lab_date_dt'] <= df['biopsy_date_dt'])
+    else:
+        eligible_mask = valid_dates & (df['lab_date_dt'] < df['biopsy_date_dt'])
+
+    eligible_df = df.loc[eligible_mask].copy()
+    eligible_df['time_to_biopsy_days'] = (eligible_df['biopsy_date_dt'] - eligible_df['lab_date_dt']).dt.total_seconds() / 86400
+    eligible_df['abs_time_to_biopsy_days'] = eligible_df['time_to_biopsy_days'].abs()
+
+    if pre_biopsy_window_days is None:
+        within_window_count = int(len(eligible_df))
+    else:
+        within_window_count = int((eligible_df['time_to_biopsy_days'] <= pre_biopsy_window_days).sum())
+
+    if patient_id_col and patient_id_col in eligible_df.columns:
+        pre_counts = eligible_df.groupby(patient_id_col).size()
+        multiple_pre_biopsy_count = int((pre_counts > 1).sum())
+        eligible_df = eligible_df.sort_values(['abs_time_to_biopsy_days', 'time_to_biopsy_days'])
+        filtered_df = eligible_df.groupby(patient_id_col, as_index=False).head(1).copy()
+    else:
+        multiple_pre_biopsy_count = 0
+        filtered_df = eligible_df.sort_values(['abs_time_to_biopsy_days', 'time_to_biopsy_days']).copy()
+
+    audit_counts = {
+        'same_day_count': int(same_day_mask.sum()),
+        'within_window_count': within_window_count,
+        'multiple_pre_biopsy_count': multiple_pre_biopsy_count
+    }
+
+    summary_path = Path(summary_output_path)
+    summary_path.parent.mkdir(parents=True, exist_ok=True)
+
+    summary_df = pd.DataFrame([audit_counts])
+    summary_df.to_csv(summary_path, index=False)
+    with open(summary_path.with_suffix('.json'), 'w', encoding='utf-8') as f:
+        json.dump(audit_counts, f, indent=2)
+
+    return filtered_df, audit_counts
+
 def preprocess(df, data_type='train', classification_type='fibrosis', scaling=False, scaler=None,
                shap_selected=False, select_closest_patients_from_mainz=False, smote=False):
     """
@@ -196,6 +283,10 @@ def preprocess(df, data_type='train', classification_type='fibrosis', scaling=Fa
 
     print(f'\n ----- processing {data_type} data ----- \n')
     df = df.reset_index()
+
+    # Temporal filtering: keep nearest pre-biopsy laboratory row per patient
+    df, timing_audit_counts = temporal_filter_pre_biopsy_labs(df)
+    print(f"Timing QC ({data_type}): {timing_audit_counts}")
 
     # Convert age from birth data
     df = calculate_age(df)
