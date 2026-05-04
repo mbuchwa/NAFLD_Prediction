@@ -1,15 +1,6 @@
 import warnings
 from utils.helper_functions import *
 from preprocess import preprare_data
-from src.models.tab_transformer import hypertrain_ensemble_tab_transformer
-from src.models.xgb import hypertrain_ensemble_xgboost
-from src.models.mcmc_bnn import hypertrain_ensemble_mcmc_bnn
-from src.models.ffn import hypertrain_ensemble_ffn
-from src.models.svm import hypertrain_ensemble_svm
-from src.models.rf import hypertrain_ensemble_rf
-from src.models.gandalf import hypertrain_ensemble_gandalf
-from src.models.vi_bnn import hypertrain_ensemble_vi_bnn
-from src.models.light_gmb import hypertrain_ensemble_light_gbm
 warnings.filterwarnings('ignore')
 
 
@@ -22,45 +13,54 @@ def hypertrain(xs_train, ys_train, xs_val, ys_val, xs_test, ys_test, xs_pro, ys_
 
     # Hypertrain TabTransformer
     if model_name == 'tab_transformer':
+        from src.models.tab_transformer import hypertrain_ensemble_tab_transformer
         hypertrain_ensemble_tab_transformer(xs_train, ys_train, xs_val, ys_val, xs_test, ys_test, xs_pro, ys_pro, df_cols, classification_type,
                                             shap_selected)
 
     # Hypertrain XGBoost
     if model_name == 'xgb':
+        from src.models.xgb import hypertrain_ensemble_xgboost
         hypertrain_ensemble_xgboost(xs_train, ys_train, xs_val, ys_val, xs_test, ys_test, xs_pro, ys_pro, df_cols, classification_type,
                                     shap_selected)
 
     # Hypertrain LightGBM
     if model_name == 'light_gbm':
+        from src.models.light_gmb import hypertrain_ensemble_light_gbm
         hypertrain_ensemble_light_gbm(xs_train, ys_train, xs_val, ys_val, xs_test, ys_test, xs_pro, ys_pro, df_cols, classification_type,
                                       shap_selected)
 
     # Hypertrain MCMC_BNN
     elif model_name == 'mcmc_bnn':
+        from src.models.mcmc_bnn import hypertrain_ensemble_mcmc_bnn
         hypertrain_ensemble_mcmc_bnn(xs_train, ys_train, xs_val, ys_val, xs_test, ys_test, xs_pro, ys_pro, df_cols, classification_type,
                                      shap_selected)
 
     # Hypertrain VI_BNN
     elif model_name == 'vi_bnn':
+        from src.models.vi_bnn import hypertrain_ensemble_vi_bnn
         hypertrain_ensemble_vi_bnn(xs_train, ys_train, xs_val, ys_val, xs_test, ys_test, xs_pro, ys_pro, df_cols, classification_type,
                                    shap_selected)
 
     # Hypertrain Feed Forward Neural Networkf
     elif model_name == 'ffn':
+        from src.models.ffn import hypertrain_ensemble_ffn
         hypertrain_ensemble_ffn(xs_train, ys_train, xs_val, ys_val, xs_test, ys_test, xs_pro, ys_pro, df_cols, classification_type,
                                 shap_selected)
 
     # Hypertrain SVM
     elif model_name == 'svm':
+        from src.models.svm import hypertrain_ensemble_svm
         hypertrain_ensemble_svm(xs_train, ys_train, xs_val, ys_val, xs_test, ys_test, xs_pro, ys_pro, df_cols, classification_type,
                                 shap_selected)
 
     # Hypertrain RF
     elif model_name == 'rf':
+        from src.models.rf import hypertrain_ensemble_rf
         hypertrain_ensemble_rf(xs_train, ys_train, xs_val, ys_val, xs_test, ys_test, xs_pro, ys_pro, df_cols, classification_type,
                                shap_selected)
 
     elif model_name == 'gandalf':
+        from src.models.gandalf import hypertrain_ensemble_gandalf
         hypertrain_ensemble_gandalf(xs_train, ys_train, xs_val, ys_val, xs_test, ys_test, xs_pro, ys_pro, df_cols, classification_type,
                                     shap_selected)
 
