@@ -1,5 +1,4 @@
 from src.utils.helper_functions import *
-from src.utils.networks import PLTabTransformer, NeuralNetwork, VI_BNN
 import shap
 from pytorch_tabular import TabularModel
 import ast
@@ -870,6 +869,7 @@ def make_ensemble_preds_vi_bnn(xs_test, ys_test, models, intra_model_preds=False
 
 
 def load_pytorch_model(checkpoint_file, classification_type, model_name, df_cols=None):
+    from src.utils.networks import PLTabTransformer, NeuralNetwork
     # Read the respective hyperparam file
     model_index = checkpoint_file.split('_')[-1].rstrip('.pth')
     with open(f"./models/{model_name}/model_params_{classification_type}_{model_index}.txt", "r") as file:
@@ -966,6 +966,7 @@ def predict_gandalf_models(data, classification_type='fibrosis'):
 
 
 def predict_tab_transformer_models(data, classification_type='fibrosis'):
+    from src.utils.networks import PLTabTransformer
     """
     Predictions of the tab_transformer model for certain data. Models are saved as checkpoint files in a directory.
 
@@ -1019,6 +1020,7 @@ def predict_tab_transformer_models(data, classification_type='fibrosis'):
 
 
 def predict_vi_bnn_models(data, classification_type='fibrosis'):
+    from src.utils.networks import VI_BNN
     """
     Predictions of the model for certain data. PyTorch models are saved as checkpoint files in a directory.
 
