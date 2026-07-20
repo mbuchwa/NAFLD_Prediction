@@ -14,7 +14,8 @@ from src.utils.plots import *
 
 pd.options.mode.chained_assignment = None
 
-# Censored-value handling policy constants (for implementation + manuscript parity)
+# Censored-value handling policy constants (for implementation + manuscript parity).
+# Change only CENSORED_VALUE_POLICY to select a different declared policy.
 CENSORED_POLICY_SUBSTITUTE_LOD = 'substitute_with_lod'
 CENSORED_POLICY_SUBSTITUTE_HALF_LOD = 'substitute_with_lod_half'
 CENSORED_POLICY_REMOVE = 'remove_with_tracked_counts'
@@ -30,7 +31,28 @@ MANUSCRIPT_METHOD_SUBSTITUTE_LOD = 'Censored values were substituted with the re
 MANUSCRIPT_METHOD_SUBSTITUTE_HALF_LOD = 'Censored values below the LOD were substituted with LOD/2.'
 MANUSCRIPT_METHOD_REMOVE = 'Censored values were removed by setting them to missing (NaN), with per-feature counts tracked.'
 
+CENSORED_POLICY_DETAILS = {
+    CENSORED_POLICY_SUBSTITUTE_LOD: {
+        'method_applied': METHOD_APPLIED_SUBSTITUTE_LOD,
+        'manuscript_text': MANUSCRIPT_METHOD_SUBSTITUTE_LOD,
+    },
+    CENSORED_POLICY_SUBSTITUTE_HALF_LOD: {
+        'method_applied': METHOD_APPLIED_SUBSTITUTE_HALF_LOD,
+        'manuscript_text': MANUSCRIPT_METHOD_SUBSTITUTE_HALF_LOD,
+    },
+    CENSORED_POLICY_REMOVE: {
+        'method_applied': METHOD_APPLIED_REMOVE,
+        'manuscript_text': MANUSCRIPT_METHOD_REMOVE,
+    },
+}
+# This is the single manuscript-ready description for the active implementation.
+CENSORED_VALUE_METHOD_TEXT = CENSORED_POLICY_DETAILS[CENSORED_VALUE_POLICY]['manuscript_text']
+
 CENSORED_VALUES_SUMMARY_PATH = Path('outputs/data_qc/censored_values_summary.csv')
+CENSORED_VALUE_PATTERN = r'[<>≤≥]'
+NON_LABORATORY_COLUMNS = frozenset({
+    'age', 'micro', 'index', 'patientennummer', 'biopsie', 'blutentnahme',
+})
 
 
 def create_scores(df_pro):
@@ -1020,11 +1042,10 @@ def clean_df(df):
 
     df = df.astype(str)
 
-    # Scan all laboratory features in the input frame (not only the model-feature subset).
-    operator_cols = [
-        col for col in df.columns
-        if col not in ['Age', 'Micro', 'index', 'Patientennummer', 'Biopsie', 'Blutentnahme']
-    ]
+    # Scan every laboratory feature in the input frame before retaining model features.
+    # This deliberately does not use ``cols``: non-model laboratory variables must be
+    # included in the QC audit as well.
+    operator_cols = get_laboratory_columns(df)
 
     for operator_col in operator_cols:
         df, indices, values, n_censored, method_applied = handle_operator(
@@ -1063,9 +1084,24 @@ def clean_df(df):
 
     summary_path = Path(__file__).resolve().parents[1] / CENSORED_VALUES_SUMMARY_PATH
     summary_path.parent.mkdir(parents=True, exist_ok=True)
-    pd.DataFrame(censored_summary_rows).to_csv(summary_path, index=False)
+    pd.DataFrame(
+        censored_summary_rows,
+        columns=['feature', 'n_censored', 'method_applied']
+    ).to_csv(summary_path, index=False)
 
     return df, (indices_list, values_list, operator_cols)
+
+
+def get_laboratory_columns(df):
+    """Return all input laboratory columns while excluding known non-laboratory fields.
+
+    Column-name matching is case-insensitive so source exports with capitalization
+    differences still receive a complete laboratory censoring scan.
+    """
+    return [
+        column for column in df.columns
+        if str(column).strip().casefold() not in NON_LABORATORY_COLUMNS
+    ]
 
 
 def drop_rows_with_high_missing_data(df, missing_data_threshold=0.70):
@@ -1103,8 +1139,11 @@ def handle_operator(df, col, policy=CENSORED_VALUE_POLICY):
         int: Number of censored entries in this feature.
         str: Method string describing how censored entries were handled.
     """
+    if policy not in CENSORED_POLICY_DETAILS:
+        raise ValueError(f'Unsupported censored-value policy: {policy}')
+
     col_as_str = df[col].astype(str)
-    censored_mask = col_as_str.str.contains(r'[<>≤≥]', case=False, regex=True, na=False)
+    censored_mask = col_as_str.str.contains(CENSORED_VALUE_PATTERN, regex=True, na=False)
     indices = df[censored_mask].index
     values = df[censored_mask].copy()
     n_censored = int(censored_mask.sum())
@@ -1114,7 +1153,7 @@ def handle_operator(df, col, policy=CENSORED_VALUE_POLICY):
 
     if policy == CENSORED_POLICY_REMOVE:
         df.loc[censored_mask, col] = np.nan
-        method_applied = METHOD_APPLIED_REMOVE
+        method_applied = CENSORED_POLICY_DETAILS[policy]['method_applied']
     elif policy in [CENSORED_POLICY_SUBSTITUTE_LOD, CENSORED_POLICY_SUBSTITUTE_HALF_LOD]:
         extracted = col_as_str[censored_mask].str.extract(r'([<>≤≥])\s*(-?\d+(?:[.,]\d+)?)')
 
@@ -1131,13 +1170,7 @@ def handle_operator(df, col, policy=CENSORED_VALUE_POLICY):
 
             df.at[idx, col] = replacement
 
-        method_applied = (
-            METHOD_APPLIED_SUBSTITUTE_LOD
-            if policy == CENSORED_POLICY_SUBSTITUTE_LOD
-            else METHOD_APPLIED_SUBSTITUTE_HALF_LOD
-        )
-    else:
-        raise ValueError(f'Unsupported censored-value policy: {policy}')
+        method_applied = CENSORED_POLICY_DETAILS[policy]['method_applied']
 
     return df, indices, values, n_censored, method_applied
 
