@@ -3,16 +3,38 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from sklearn.metrics import roc_auc_score
-
-from preprocess import preprare_data
-from src.models.light_gmb import hypertrain_light_gbm_model
 
 
 def _binary_auroc(y_true, proba):
+    """
+    Compute binary AUROC without requiring sklearn at import time.
+    """
     if proba.ndim > 1:
         proba = proba[:, 1]
-    return float(roc_auc_score(y_true, proba))
+
+    y_true = np.asarray(y_true)
+    proba = np.asarray(proba)
+    positive = y_true == 1
+    negative = y_true == 0
+    n_positive = int(positive.sum())
+    n_negative = int(negative.sum())
+    if n_positive == 0 or n_negative == 0:
+        raise ValueError('AUROC is undefined when a cohort has one observed class.')
+
+    order = np.argsort(proba)
+    sorted_scores = proba[order]
+    ranks = np.empty(len(proba), dtype=float)
+    start = 0
+    while start < len(proba):
+        end = start + 1
+        while end < len(proba) and sorted_scores[end] == sorted_scores[start]:
+            end += 1
+        average_rank = (start + 1 + end) / 2.0
+        ranks[order[start:end]] = average_rank
+        start = end
+
+    positive_rank_sum = ranks[positive].sum()
+    return float((positive_rank_sum - n_positive * (n_positive + 1) / 2.0) / (n_positive * n_negative))
 
 
 def _ensemble_proba(models, x):
@@ -21,6 +43,8 @@ def _ensemble_proba(models, x):
 
 
 def _train_ensemble(xs_train, ys_train, xs_val, ys_val, classification_type):
+    from src.models.light_gmb import hypertrain_light_gbm_model
+
     models = []
     for x_train, y_train, x_val, y_val in zip(xs_train, ys_train, xs_val, ys_val):
         models.append(
@@ -37,21 +61,22 @@ def _train_ensemble(xs_train, ys_train, xs_val, ys_val, classification_type):
 
 def _rank_biomarkers_by_missingness(profile_path, available_features):
     missingness_df = pd.read_csv(profile_path)
-    if 'biomarker' not in missingness_df.columns:
+    required_columns = {'biomarker', 'missingness_before_cleaning_pct'}
+    missing_columns = required_columns.difference(missingness_df.columns)
+    if missing_columns:
         raise ValueError(
-            f"Expected `biomarker` column in {profile_path}, got columns: {list(missingness_df.columns)}"
-        )
-    if 'missingness_before_cleaning_pct' not in missingness_df.columns:
-        raise ValueError(
-            "Expected `missingness_before_cleaning_pct` column in missingness profile."
+            f"Expected columns {sorted(required_columns)} in {profile_path}, "
+            f"missing: {sorted(missing_columns)}. Got columns: {list(missingness_df.columns)}"
         )
 
     ranked = missingness_df[missingness_df['biomarker'].isin(available_features)].copy()
     ranked = ranked.sort_values('missingness_before_cleaning_pct', ascending=False).reset_index(drop=True)
+    ranked.insert(0, 'missingness_rank', np.arange(1, len(ranked) + 1))
     if ranked.empty:
         raise ValueError(
             "No overlap between profiling biomarkers and model features. "
-            "Cannot build reduced feature set."
+            "Cannot build reduced feature set. Regenerate outputs/data_qc/missingness_profile.csv "
+            "from the same preprocessing run used for model features."
         )
     return ranked
 
@@ -62,6 +87,8 @@ def _select_features(xs_list, df_cols, selected_cols):
 
 
 def run_missingness_sensitivity(classification_type='two_stage', top_n=3):
+    from preprocess import preprare_data
+
     repo_root = Path(__file__).resolve().parents[1]
     profile_path = repo_root / 'outputs' / 'data_qc' / 'missingness_profile.csv'
     if not profile_path.exists():
@@ -91,13 +118,17 @@ def run_missingness_sensitivity(classification_type='two_stage', top_n=3):
         classification_type,
     )
 
-    full_internal = _binary_auroc(ys_test[0], _ensemble_proba(full_models, xs_test[0]))
-    full_external = _binary_auroc(ys_pro[0], _ensemble_proba(full_models, xs_pro[0]))
+    full_scores = {
+        'internal': _binary_auroc(ys_test[0], _ensemble_proba(full_models, xs_test[0])),
+        'external': _binary_auroc(ys_pro[0], _ensemble_proba(full_models, xs_pro[0])),
+    }
 
     reduced_xs_test = _select_features(xs_test, df_cols, reduced_features)
     reduced_xs_pro = _select_features(xs_pro, df_cols, reduced_features)
-    reduced_internal = _binary_auroc(ys_test[0], _ensemble_proba(reduced_models, reduced_xs_test[0]))
-    reduced_external = _binary_auroc(ys_pro[0], _ensemble_proba(reduced_models, reduced_xs_pro[0]))
+    reduced_scores = {
+        'internal': _binary_auroc(ys_test[0], _ensemble_proba(reduced_models, reduced_xs_test[0])),
+        'external': _binary_auroc(ys_pro[0], _ensemble_proba(reduced_models, reduced_xs_pro[0])),
+    }
 
     output_dir = repo_root / 'outputs' / 'robustness'
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -107,23 +138,27 @@ def run_missingness_sensitivity(classification_type='two_stage', top_n=3):
         [
             {
                 'classification_type': classification_type,
+                'cohort': cohort,
                 'excluded_top_missing_biomarkers': '; '.join(excluded),
+                'n_full_features': len(df_cols),
                 'n_reduced_features': len(reduced_features),
-                'internal_auroc_full': full_internal,
-                'internal_auroc_reduced': reduced_internal,
-                'internal_delta_full_minus_reduced': full_internal - reduced_internal,
-                'external_auroc_full': full_external,
-                'external_auroc_reduced': reduced_external,
-                'external_delta_full_minus_reduced': full_external - reduced_external,
+                'auroc_full': full_scores[cohort],
+                'auroc_reduced': reduced_scores[cohort],
+                'delta_full_minus_reduced': full_scores[cohort] - reduced_scores[cohort],
             }
+            for cohort in ['internal', 'external']
         ]
     )
     comparison.to_csv(output_path, index=False)
 
+    ranked_output_path = output_dir / 'missingness_ranked_biomarkers.csv'
+    ranked_missing.to_csv(ranked_output_path, index=False)
+
     print('Top biomarkers by missingness:')
-    print(ranked_missing[['biomarker', 'missingness_before_cleaning_pct']].head(10).to_string(index=False))
+    print(ranked_missing[['missingness_rank', 'biomarker', 'missingness_before_cleaning_pct']].head(10).to_string(index=False))
     print(f'\nReduced feature set excludes: {excluded}')
     print(f'Exported sensitivity comparison to: {output_path}')
+    print(f'Exported ranked missingness table to: {ranked_output_path}')
 
     return output_path
 
