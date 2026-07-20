@@ -178,14 +178,15 @@ sudo systemctl restart docker
 
 ## Scope <a name="Scope"></a>
 
-Dieses Repository deckt die in den Manuskript-Analysen beschriebenen Kernfähigkeiten ab:
-- Vollständige Datenvorverarbeitung für Retrospektiv- und Prospektivkohorten (Cleaning, Missing-Data-Handling, MICE-Imputation, optionale Skalierung).
-- Modelltraining und Evaluation für mehrere Modellklassen (SVM, RF, XGB, LightGBM, MLP/FFN, BNN-Varianten, GANDALF, TabTransformer).
-- Reproduzierbare Reporting-Artefakte unter `outputs/reporting/`, inkl.
-  - `preprocessing_summary.csv` (sequenzielle Vorverarbeitungsschritte)
-  - `hyperparameter_search_summary.csv` (modellweise Hyperparametersuche).
+Dieses Repository unterstützt die im Manuskript beschriebenen, klassifikationsorientierten NAFLD-Liver-Staging-Analysen auf Basis klinischer Laborparameter. Der Codeumfang umfasst:
+- Datenvorverarbeitung für retrospektive und prospektive Kohorten, einschließlich Cleaning, Missing-Data-Handling, MICE-Imputation, optionaler Skalierung/Encoding und dokumentierter Outlier-Policy.
+- Training, Hyperparameter-Suche und Evaluation für die hier implementierten Modellklassen (SVM, RF, XGBoost, LightGBM, MLP/FFN, VI-BNN, MCMC-BNN, GANDALF und TabTransformer).
+- Modellinterpretation und Evaluation für diese Klassifikationsaufgaben, soweit durch die vorhandenen Trainings- und Validierungsroutinen abgedeckt.
+- Reproduzierbare Reporting-Artefakte unter `outputs/reporting/`, die mit `python outputs/reporting/generate_reporting_summaries.py` erzeugt werden können:
+  - `preprocessing_summary.csv` dokumentiert die sequenzielle Vorverarbeitung (Cleaning, Missing-Data-Handling, Imputation, Scaling/Encoding und Outlier-Policy).
+  - `hyperparameter_search_summary.csv` dokumentiert pro Modell die getunten Parameter, Suchräume, Suchstrategie, Optimierungsmetrik und Trial-Anzahl.
 
-Damit ist der Fokus klar auf klassifikationsorientierte NAFLD-Liver-Staging-Workflows und deren nachvollziehbare Dokumentation ausgerichtet; zusätzliche klinische Endpunkte außerhalb dieser Pipeline sind nicht Teil dieses Codes.
+Nicht Teil dieses Repository-Scopes sind zusätzliche klinische Endpunkte, kausale Analysen, prospektive Deployment-/Monitoring-Infrastruktur oder nicht dokumentierte Manuskript-Claims außerhalb dieser Pipeline.
 
 --------------------- 
 
