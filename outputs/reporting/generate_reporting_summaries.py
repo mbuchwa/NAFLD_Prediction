@@ -120,12 +120,16 @@ def build_hyperparameter_search_summary() -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+PREPROCESSING_SUMMARY_FILENAME = "preprocessing_summary.csv"
+HYPERPARAMETER_SEARCH_SUMMARY_FILENAME = "hyperparameter_search_summary.csv"
+
+
 def main() -> None:
     output_dir = Path(__file__).resolve().parent
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    preprocessing_summary_path = output_dir / "preprocessing_summary.csv"
-    hyperparameter_summary_path = output_dir / "hyperparameter_search_summary.csv"
+    preprocessing_summary_path = output_dir / PREPROCESSING_SUMMARY_FILENAME
+    hyperparameter_summary_path = output_dir / HYPERPARAMETER_SEARCH_SUMMARY_FILENAME
 
     build_preprocessing_summary().to_csv(preprocessing_summary_path, index=False)
     build_hyperparameter_search_summary().to_csv(hyperparameter_summary_path, index=False)
