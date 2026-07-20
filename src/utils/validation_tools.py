@@ -261,23 +261,56 @@ def _decision_curve_net_benefit(y_true, risk_scores, thresholds):
     return pd.DataFrame(out)
 
 
-def _save_decision_curve_plot(y_true, model_scores, fib4_scores, output_path, title_suffix='internal test'):
+def _decision_curve_summary(y_true, model_scores, fib4_scores):
+    """
+    Build decision-curve net-benefit values for the primary model, FIB-4,
+    treat-all, and treat-none strategies over threshold probabilities.
+    """
     prevalence = float(np.mean(np.asarray(y_true).astype(int)))
     thresholds = np.linspace(0.01, 0.99, 99)
 
-    model_nb = _decision_curve_net_benefit(y_true, model_scores, thresholds)
-    fib4_nb = _decision_curve_net_benefit(y_true, fib4_scores, thresholds)
-    treat_all_nb = pd.DataFrame({
-        'threshold': thresholds,
-        'net_benefit': prevalence - (1 - prevalence) * (thresholds / (1 - thresholds))
-    })
-    treat_none_nb = pd.DataFrame({'threshold': thresholds, 'net_benefit': np.zeros_like(thresholds)})
+    model_nb = _decision_curve_net_benefit(y_true, model_scores, thresholds).rename(
+        columns={'net_benefit': 'primary_model_net_benefit'}
+    )
+    fib4_nb = _decision_curve_net_benefit(y_true, fib4_scores, thresholds).rename(
+        columns={'net_benefit': 'fib4_net_benefit'}
+    )
+    summary = model_nb.merge(fib4_nb, on='threshold', how='inner')
+    summary['treat_all_net_benefit'] = (
+        prevalence - (1 - prevalence) * (summary['threshold'] / (1 - summary['threshold']))
+    )
+    summary['treat_none_net_benefit'] = 0.0
+    return summary
 
+
+def _save_decision_curve_plot(decision_curve_df, output_path, title_suffix='internal test'):
     plt.figure(figsize=(8, 6))
-    plt.plot(model_nb['threshold'], model_nb['net_benefit'], label='Primary model', linewidth=2.2)
-    plt.plot(fib4_nb['threshold'], fib4_nb['net_benefit'], label='FIB-4 comparator', linewidth=2.2)
-    plt.plot(treat_all_nb['threshold'], treat_all_nb['net_benefit'], '--', label='Treat all', color='grey')
-    plt.plot(treat_none_nb['threshold'], treat_none_nb['net_benefit'], ':', label='Treat none', color='black')
+    plt.plot(
+        decision_curve_df['threshold'],
+        decision_curve_df['primary_model_net_benefit'],
+        label='Primary model',
+        linewidth=2.2
+    )
+    plt.plot(
+        decision_curve_df['threshold'],
+        decision_curve_df['fib4_net_benefit'],
+        label='FIB-4 comparator',
+        linewidth=2.2
+    )
+    plt.plot(
+        decision_curve_df['threshold'],
+        decision_curve_df['treat_all_net_benefit'],
+        '--',
+        label='Treat all',
+        color='grey'
+    )
+    plt.plot(
+        decision_curve_df['threshold'],
+        decision_curve_df['treat_none_net_benefit'],
+        ':',
+        label='Treat none',
+        color='black'
+    )
     plt.xlabel('Threshold probability')
     plt.ylabel('Net benefit')
     plt.title(f'Decision curve analysis ({title_suffix})')
@@ -416,11 +449,15 @@ def evaluate_performance(models, xs_test, ys_test, df_cols, model_name, classifi
     if not prospective and eval_proba_ref.shape[1] == 2:
         fib4_scores = _extract_fib4_scores_from_features(xs_test[0], df_cols)
         if fib4_scores is not None:
-            decision_curve_path = f'{CLINICAL_UTILITY_DIR}/decision_curve_internal_test.png'
-            _save_decision_curve_plot(
+            decision_curve_df = _decision_curve_summary(
                 y_true=eval_y_ref,
                 model_scores=eval_proba_ref[:, 1],
-                fib4_scores=_to_unit_interval(fib4_scores),
+                fib4_scores=_to_unit_interval(fib4_scores)
+            )
+            decision_curve_df.to_csv(f'{CLINICAL_UTILITY_DIR}/decision_curve_internal_test.csv', index=False)
+            decision_curve_path = f'{CLINICAL_UTILITY_DIR}/decision_curve_internal_test.png'
+            _save_decision_curve_plot(
+                decision_curve_df=decision_curve_df,
                 output_path=decision_curve_path,
                 title_suffix='internal test'
             )
