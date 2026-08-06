@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 from sklearn.metrics import roc_auc_score
 
-from preprocess import preprare_data
+from src.preprocess import prepare_data
 from src.models.light_gmb import hypertrain_ensemble_light_gbm
 
 
@@ -22,8 +22,8 @@ def _binary_auroc(y_true, proba):
 
 
 def run_window_experiment(window_label, window_days_pre, window_days_post, classification_type='two_stage',
-                          shap_selected=True, scaling=False):
-    xs_train, ys_train, xs_val, ys_val, xs_test, ys_test, xs_pro, ys_pro, _ = preprare_data(
+                          shap_selected=False, scaling=False):
+    xs_train, ys_train, xs_val, ys_val, xs_test, ys_test, xs_pro, ys_pro, _ = prepare_data(
         classification_type=classification_type,
         shap_selected=shap_selected,
         scaling=scaling,

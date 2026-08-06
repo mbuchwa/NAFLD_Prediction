@@ -13,7 +13,7 @@ python --version
 
 ## 1) Regenerate preprocessing artifacts (temporal filtering, attrition, missingness, censored-value tracking)
 
-Run any script that calls `preprare_data(...)` once to force preprocessing outputs to be rebuilt.
+Run any script that calls `prepare_data(...)` once to force preprocessing outputs to be rebuilt.
 
 ```bash
 cd src

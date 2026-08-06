@@ -14,7 +14,7 @@ import os
 
 
 def hypertrain_ensemble_gandalf(xs_train, ys_train, xs_val, ys_val, xs_test, ys_test, xs_pro, ys_pro, df_cols,
-                                classification_type, shap_selected, interpret_model=True, testing=True):
+                                classification_type, shap_selected, interpret_model=False, testing=True):
     models = []
     models_params = []
     model_name = 'gandalf_shap_selected' if shap_selected else 'gandalf'
@@ -110,10 +110,10 @@ def hypertrain_gandalf_model(x_train, y_train, x_val, y_val, df_cols, cv=5, n_it
 
     # sklearn KFold does not return same length of fold x and fold y if x.shape[0] % cv != 0 !
     # get the remainder
-    b = x.shape[0] % cv
-    # drop the remainder samples
-    x = x[:-1 * b]
-    y = y[:-1 * b]
+    # b = x.shape[0] % cv
+    # # drop the remainder samples
+    # x = x[:-1 * b]
+    # y = y[:-1 * b]
 
     for _ in range(n_iter):
         # Set seed
@@ -167,7 +167,10 @@ def hypertrain_gandalf_model(x_train, y_train, x_val, y_val, df_cols, cv=5, n_it
             tabular_model.fit(train=train_data, validation=validation_data)
             pred_df = tabular_model.predict(validation_data)
 
-            predicted_labels = pred_df['prediction']
+            # pytorch_tabular renamed the prediction column across versions
+            pred_col = 'prediction' if 'prediction' in pred_df.columns else \
+                next(c for c in pred_df.columns if c.endswith('prediction'))
+            predicted_labels = pred_df[pred_col]
             actual_labels = validation_data['target']
 
             # Calculate accuracy
@@ -184,7 +187,7 @@ def hypertrain_gandalf_model(x_train, y_train, x_val, y_val, df_cols, cv=5, n_it
             best_model = tabular_model
             best_params = sampled_params
 
-        return best_model, best_params
+    return best_model, best_params
 
 
 # def make_ensemble_preds_gandalf(x_test, y_test, df_cols, models, classification_type='fibrosis'):

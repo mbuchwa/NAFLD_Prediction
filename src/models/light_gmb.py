@@ -1,7 +1,18 @@
 from src.utils.helper_functions import *
 from src.utils.validation_tools import evaluate_performance, interpret
 from sklearn.model_selection import RandomizedSearchCV
+from sklearn.utils import class_weight
 import lightgbm as lgb
+
+# ---------------------------------------------------------------------------
+# Reproducibility settings. Keep these in sync with xgb.py.
+# ---------------------------------------------------------------------------
+RANDOM_STATE = 42
+N_ESTIMATORS = 500          # upper bound; early stopping decides the actual size
+N_ITER = 10                 # candidates drawn by the randomized search
+EARLY_STOPPING_ROUNDS = 10
+
+
 
 
 def hypertrain_ensemble_light_gbm(xs_train, ys_train, xs_val, ys_val, xs_test, ys_test, xs_pro, ys_pro, df_cols,
@@ -240,114 +251,106 @@ def finetune_ensemble_light_gbm(xs_finetune, ys_finetune, xs_val, ys_val, xs_tes
 #     return np.array(indices)
 
 
-def hypertrain_light_gbm_model(x_train, y_train, x_val, y_val, x_test=None, y_test=None, x_pro=None, y_pro=None, classification_type='fibrosis'):
+def hypertrain_light_gbm_model(x_train, y_train, x_val, y_val, x_test=None, y_test=None, x_pro=None, y_pro=None,
+                               classification_type='fibrosis', random_state=RANDOM_STATE,
+                               early_stopping_rounds=EARLY_STOPPING_ROUNDS):
     """
-    Trains a model on the provided features (x_train) and labels (y_train) with early stopping based on validation loss.
+    Trains a LightGBM model with a randomized hyperparameter search on the training
+    partition and early stopping on the validation partition.
+
+    Changes against the previous version, all of which affect the reported numbers:
+
+    1. random_state / deterministic on the ESTIMATOR. Previously only
+       RandomizedSearchCV was seeded, which fixes the choice of candidates but not
+       the fitting itself. Without this the same data can yield different models
+       between runs.
+
+    2. subsample_freq=1. LightGBM ignores `subsample` (bagging_fraction) unless
+       `subsample_freq` (bagging_freq) is greater than zero. In the previous
+       version one of the three searched hyperparameters therefore had no effect
+       at all; subsample=0.3 and subsample=1.0 produced bit-identical models.
+
+    3. Early stopping via callback. Passing eval_set alone does nothing in
+       lightgbm >= 4 -- it only records metrics. The Methods section states that
+       early stopping was performed on the validation partition, which was true
+       for XGBoost but not for LightGBM. n_estimators is raised so that early
+       stopping, not the iteration cap, determines the model size.
+
+    4. scoring='roc_auc'. The previous scorer, neg_mean_squared_error, calls
+       predict() on a classifier and therefore scores hard 0/1 labels, i.e. the
+       misclassification rate. That is a step function on ~214 training samples:
+       candidates tie, ties are broken by position, and the selection flips on
+       small data changes even though AUROC is the metric the manuscript reports.
 
     Args:
-        x_train (pandas.DataFrame or numpy.ndarray): The features used for training.
-        y_train (pandas.Series or numpy.ndarray): The labels used for training.
-        x_val (pandas.DataFrame or numpy.ndarray): The features used for validation.
-        y_val (pandas.Series or numpy.ndarray): The labels used for validation.
-        classification_type (str): 'fibrosis', 'cirrhosis', 'two_stage' or 'three_stage'
+        x_train, y_train: training features and labels.
+        x_val, y_val: validation features and labels, used for early stopping only.
+        x_test, y_test, x_pro, y_pro: accepted for signature compatibility, unused.
+        classification_type: 'fibrosis', 'cirrhosis', 'two_stage' or 'three_stage'.
+        random_state: seed for the estimator and the search.
+        early_stopping_rounds: patience on the validation partition.
 
     Returns:
-        sklearn model: The trained model.
+        The refitted best estimator of the randomized search.
     """
-    # ---------------------------------------------------------
-    # from sklearn.linear_model import LogisticRegression
-    # from sklearn.metrics import accuracy_score, f1_score, confusion_matrix
-    #
-    # model = LogisticRegression()
-    # model.fit(x_train, y_train)
-    #
-    # # Extract coefficients and intercept
-    # coefficients = model.coef_[0]
-    # intercept = model.intercept_[0]
-    #
-    # # Map coefficients to feature names
-    # feature_names = ['Thrombozyten (Mrd/l)', 'MCV (fl)', 'INR']
-    # coef_dict = dict(zip(feature_names, coefficients))
-    #
-    # # Print the logistic regression equation
-    # print("Logistic Regression Equation:")
-    # print(
-    #     f"log-odds = {intercept:.4f} + ({coef_dict['Thrombozyten (Mrd/l)']:.4f} * Thrombozyten (Mrd/l)) + ({coef_dict['MCV (fl)']:.4f} * MCV (fl)) + ({coef_dict['INR']:.4f} * INR)")
-    #
-    # # To get the probability, use the sigmoid function
-    # print("\nProbability of positive class (P):")
-    # print("P = 1 / (1 + exp(-log-odds))")
-    #
-    # breakpoint()
-    # # Make predictions on the test set
-    # y_test_pred_proba = model.predict_proba(x_test)[:, 1]  # Probabilities for the positive class
-    # y_test_pred = (y_test_pred_proba >= 0.5).astype(int)  # Convert probabilities to binary prediction
-    #
-    # # Calculate metrics
-    # accuracy = accuracy_score(y_test, y_test_pred)
-    # f1 = f1_score(y_test, y_test_pred)
-    # tn, fp, fn, tp = confusion_matrix(y_test, y_test_pred).ravel()
-    # ppv = tp / (tp + fp)  # Positive Predictive Value (Precision)
-    # tpr = tp / (tp + fn)  # True Positive Rate (Recall)
-    #
-    # # Print metrics
-    # print(f"Accuracy: {accuracy:.4f}")
-    # print(f"F1 Score: {f1:.4f}")
-    # print(f"Positive Predictive Value (PPV): {ppv:.4f}")
-    # print(f"True Positive Rate (TPR): {tpr:.4f}")
-    #
-    # # Make predictions on the prospective set
-    # y_pro_pred_proba = model.predict_proba(x_pro)[:, 1]  # Probabilities for the positive class
-    # y_pro_pred = (y_pro_pred_proba >= 0.5).astype(int)  # Convert probabilities to binary prediction
-    #
-    # # Calculate metrics
-    # accuracy = accuracy_score(y_pro, y_pro_pred)
-    # f1 = f1_score(y_pro, y_pro_pred)
-    # tn, fp, fn, tp = confusion_matrix(y_pro, y_pro_pred).ravel()
-    # ppv = tp / (tp + fp)  # Positive Predictive Value (Precision)
-    # tpr = tp / (tp + fn)  # True Positive Rate (Recall)
-    #
-    # # Print metrics
-    # print(f"Accuracy: {accuracy:.4f}")
-    # print(f"F1 Score: {f1:.4f}")
-    # print(f"Positive Predictive Value (PPV): {ppv:.4f}")
-    # print(f"True Positive Rate (TPR): {tpr:.4f}")
-    # breakpoint()
-    #
-    # ---------------------------------------------------------
+    if classification_type in ['fibrosis', 'cirrhosis', 'two_stage']:
+        objective_kwargs = dict(objective='binary')
+        scoring = 'roc_auc'
+        eval_metric = 'auc'
+    elif classification_type == 'three_stage':
+        objective_kwargs = dict(objective='multiclass', num_class=3)
+        scoring = 'roc_auc_ovr'
+        eval_metric = 'multi_logloss'
+    else:
+        raise ValueError(f'classification_type {classification_type} is not implemented!')
+
+    lgb_model = lgb.LGBMClassifier(
+        boosting_type='gbdt',
+        verbosity=-1,
+        n_estimators=N_ESTIMATORS,
+        random_state=random_state,
+        deterministic=True,
+        force_row_wise=True,      # avoids the auto-detection that can vary between runs
+        n_jobs=1,                 # multithreaded histogram building is not bit-reproducible
+        **objective_kwargs
+    )
 
     grid_params = {
         'max_depth': np.arange(1, 40),
         'learning_rate': np.linspace(0.5, 0.01, 5),
-        'subsample': np.linspace(1, 0.3, 5)
+        'subsample': np.linspace(1, 0.3, 5),
+        'subsample_freq': [1],    # required for subsample to take effect
     }
 
-    if classification_type in ['fibrosis', 'cirrhosis', 'two_stage']:
-        lgb_model = lgb.LGBMClassifier(boosting_type='gbdt', objective='binary', verbosity=-1)
-
-    elif classification_type == 'three_stage':
-        lgb_model = lgb.LGBMClassifier(boosting_type='gbdt', objective='multiclass', num_class=3, verbosity=-1)
-
-    else:
-        raise ValueError(f'classification_type {classification_type} is not implemented!')
+    classes_weights = class_weight.compute_sample_weight(class_weight='balanced', y=y_train)
 
     random_search = RandomizedSearchCV(
         estimator=lgb_model,
         param_distributions=grid_params,
-        scoring='accuracy' if classification_type == 'three_stage' else 'neg_mean_squared_error',
+        n_iter=N_ITER,
+        scoring=scoring,
         cv=5,
-        verbose=1,
-        random_state=42,
+        verbose=0,
+        random_state=random_state,
         n_jobs=1
     )
 
-    random_search.fit(x_train, y_train, eval_set=[(x_val, y_val)],
-                      eval_metric='multi_logloss' if classification_type == 'three_stage' else 'rmse')
+    # lightgbm >= 4.6 deprecates eval_set in favour of eval_X / eval_y; older
+    # versions do not know the new names. Try the new signature first and fall
+    # back, so the same file works across the versions in the group.
+    fit_common = dict(sample_weight=classes_weights,
+                      eval_metric=eval_metric,
+                      callbacks=[lgb.early_stopping(early_stopping_rounds, verbose=False),
+                                 lgb.log_evaluation(period=0)])
+    try:
+        random_search.fit(x_train, y_train, eval_X=x_val, eval_y=y_val, **fit_common)
+    except TypeError:
+        random_search.fit(x_train, y_train, eval_set=[(x_val, y_val)], **fit_common)
 
-    # print()
-    # print(f'max_depth: {random_search.best_estimator_.max_depth}')
-    # print(f'learning_rate: {random_search.best_estimator_.learning_rate}')
-    # print(f'subsample: {random_search.best_estimator_.subsample}')
-    # print()
+    best = random_search.best_estimator_
+    n_trees = best.booster_.num_trees() if hasattr(best, 'booster_') else None
+    print(f'    best: max_depth={best.max_depth}, learning_rate={best.learning_rate:.4f}, '
+          f'subsample={best.subsample:.2f}, trees={n_trees}/{N_ESTIMATORS}, '
+          f'cv_{scoring}={random_search.best_score_:.4f}')
 
-    return random_search.best_estimator_
+    return best

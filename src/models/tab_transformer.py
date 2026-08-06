@@ -185,17 +185,21 @@ def hypertrain_tab_transformer_model(x_train, y_train, x_val, y_val, df_cols, sc
 
     # sklearn KFold does not return same length of fold x and fold y if x.shape[0] % cv != 0 !
     # get the remainder
-    b = x.shape[0] % cv
-    # drop the remainder samples
-    x = x[:-1 * b]
-    y = y[:-1 * b]
+    # b = x.shape[0] % cv
+    # # drop the remainder samples
+    # x = x[:-1 * b]
+    # y = y[:-1 * b]
 
     # Loop for hyperparameter search
     for _ in range(n_iter):
         # Set seed
         np.random.seed(42)
         # Sample hyperparameters from the search space
-        sampled_params = {param: np.random.choice(values) for param, values in hp_space.items()}
+        sampled_params = {}
+        for param, values in hp_space.items():
+            v = np.random.choice(values)
+            # beartype in tab_transformer_pytorch rejects numpy scalar types
+            sampled_params[param] = int(v) if param in ('num_layers', 'hidden_dim') else float(v)
         sampled_params['out_dim'] = 3 if classification_type == 'three_stage' else 2
 
         # Perform cross-validation

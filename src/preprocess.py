@@ -11,7 +11,7 @@ import pickle
 from src.select_test_datasets import *
 from sklearn.model_selection import StratifiedKFold
 from src.utils.plots import *
-
+from src.cohort_figures import export_label_audit, export_cohort_figures
 pd.options.mode.chained_assignment = None
 
 # Censored-value handling policy constants (for implementation + manuscript parity).
@@ -51,7 +51,7 @@ CENSORED_VALUE_METHOD_TEXT = CENSORED_POLICY_DETAILS[CENSORED_VALUE_POLICY]['man
 CENSORED_VALUES_SUMMARY_PATH = Path('outputs/data_qc/censored_values_summary.csv')
 CENSORED_VALUE_PATTERN = r'[<>≤≥]'
 NON_LABORATORY_COLUMNS = frozenset({
-    'age', 'micro', 'index', 'patientennummer', 'biopsie', 'blutentnahme',
+    'age', 'micro', 'index', 'patientennummer', 'LAP-Termin', 'blutentnahme',
 })
 
 
@@ -77,8 +77,8 @@ def create_scores(df_pro):
     return df_pro
 
 
-def preprare_data(classification_type, shap_selected, scaling, finetune=False, select_patients=False, smote=False,
-                  window_days_pre=None, window_days_post=0):
+def prepare_data(classification_type, shap_selected, scaling, finetune=False, select_patients=False, smote=False,
+                  window_days_pre=7, window_days_post=0):
     # Load data
     if finetune:
         df = pd.read_excel('../data/20240813-FibrosisDB(302_Patients).xlsx')
@@ -93,11 +93,15 @@ def preprare_data(classification_type, shap_selected, scaling, finetune=False, s
         df = pd.read_excel('../data/20231129 Lap und Histo Daten von Ines Tuschner.xlsx')
         df2 = pd.read_excel('../data/202403 Lap und Histo Daten von Ines Tuschner.xlsx')
         df_pro = pd.read_excel('../data/20240813-FibrosisDB(302_Patients).xlsx')
+
+        # (kein sys.exit hier - nur print)
+        # ===== END DEBUG B =====
         df_pro = rename_column_names(df_pro)
         df_pro = create_scores(df_pro)
 
         df2 = df2[['HbA1c (%)', 'Glucose in plasma (mg/dL)', 'LDL- Cholesterin (mg/dL)']]
         df = pd.concat([df, df2], axis=1)
+        export_label_audit(df, df_pro)
 
     print(f'\n----- length of original dataframe: {len(df)} -----\n')
     _, attrition_json = export_patient_attrition(
@@ -108,18 +112,47 @@ def preprare_data(classification_type, shap_selected, scaling, finetune=False, s
     )
     print(f'Patient attrition summary: {attrition_json}')
 
+    # Determine the analytic cohort ONCE, then split it. Splitting the raw frame
+    # and filtering each partition separately let a patient with two eligible lab
+    # rows land in two partitions, produced the 304-vs-305 discrepancy, and made
+    # stratification ineffective because ~53% of rows were removed after the split.
+    _a = df.copy()
+    _a, _ = temporal_filter_pre_biopsy_labs(
+        _a, window_days_pre=window_days_pre, window_days_post=window_days_post,
+        summary_output_path=None)
+    _a = calculate_age(_a)
+    _a, _ = clean_df(_a)
+    _a = _a.astype(float).dropna(subset=['Micro'])
+    _a = drop_rows_with_high_missing_data(_a)
+    df = df.loc[df.index.intersection(_a.index)]
+    print(f'analytic cohort before split: {len(df)}')
+
     if finetune:
         # Split df into train_val_df and test_df
         train_val_df, test_df = train_test_split(df, test_size=0.2, random_state=42)
 
         train_df_umm, test_df_umm = train_test_split(df_umm, test_size=0.1, random_state=42)
 
-    else:
-        # Split df into train_val_df and test_df
-        train_val_df, test_df = train_test_split(df, test_size=0.1, random_state=42)
+        # Split train_val_df into train_df and val_df
+        train_df, val_df = train_test_split(train_val_df, test_size=0.2, random_state=42)
 
-    # Split train_val_df into train_df and val_df
-    train_df, val_df = train_test_split(train_val_df, test_size=0.2, random_state=42)
+    else:
+        # Stratify on the histological grade F0-F4, not on the task label, so that
+        # ONE split serves all four tasks. Records without a grade form their own
+        # stratum (-1); they are dropped later anyway, but keeping them here means
+        # every task sees the identical partition indices.
+        #
+        # Without stratification the validation partition carried 19.4% cirrhosis
+        # against 39.3% in the test partition, which made the Youden threshold
+        # transferred from validation unusable at evaluation time.
+        _strata = pd.to_numeric(df['Micro'], errors='coerce')
+        _strata = _strata.where(_strata.between(0, 4), -1).fillna(-1).astype(int)
+
+        train_val_df, test_df = train_test_split(
+            df, test_size=0.1, random_state=42, stratify=_strata)
+        train_df, val_df = train_test_split(
+            train_val_df, test_size=0.2, random_state=42,
+            stratify=_strata.loc[train_val_df.index])
 
     if finetune:
         data_splits = ['train_ft', 'val_ft', 'test_ft']
@@ -177,6 +210,10 @@ def preprare_data(classification_type, shap_selected, scaling, finetune=False, s
                                                     select_closest_patients_from_mainz=select_patients, smote=smote,
                                                     window_days_pre=window_days_pre,
                                                     window_days_post=window_days_post)
+
+
+    export_cohort_figures(xs_train, ys_train, xs_val, ys_val, xs_test, ys_test,
+                          xs_pro, ys_pro, classification_type)
 
     # concat all data files to one processed_data csv
     merged_no_mice_df = pd.concat([pd.read_csv(f'../data/preprocessed_no_mice_train/train_{classification_type}.csv'),
@@ -241,8 +278,8 @@ def preprare_data(classification_type, shap_selected, scaling, finetune=False, s
 
 
 
-def temporal_filter_pre_biopsy_labs(df, biopsy_date_col='Biopsie', lab_date_col='Blutentnahme',
-                                    patient_id_col=None, include_same_day=False, window_days_pre=None,
+def temporal_filter_pre_biopsy_labs(df, biopsy_date_col='LAP-Termin', lab_date_col='Blutentnahme',
+                                    patient_id_col=None, include_same_day=False, window_days_pre=7,
                                     window_days_post=0,
                                     summary_output_path='outputs/data_qc/lab_timing_summary.csv'):
     """
@@ -278,9 +315,8 @@ def temporal_filter_pre_biopsy_labs(df, biopsy_date_col='Biopsie', lab_date_col=
         return df, audit_counts
 
     if patient_id_col is None:
-        candidate_id_cols = ['Patient_ID', 'PatientID', 'patient_id', 'ID', 'PatID', 'Lfd. Nr.']
+        candidate_id_cols = ['Patient_ID', 'PatientID', 'patient_id', 'ID', 'PatID', 'Lfd. Nr.', 'Patientennummer']
         patient_id_col = next((col for col in candidate_id_cols if col in df.columns), None)
-
     df['biopsy_date_dt'] = pd.to_datetime(df[biopsy_date_col], errors='coerce')
     df['lab_date_dt'] = pd.to_datetime(df[lab_date_col], errors='coerce')
 
@@ -338,6 +374,7 @@ def _feature_missingness_percent(df):
     if df.empty:
         return pd.Series(dtype=float)
     return (df.isna().mean() * 100.0).astype(float)
+
 
 
 def export_missingness_profile(before_df, after_df, output_dir='outputs/data_qc',
@@ -429,7 +466,7 @@ Document likely mechanisms for high-missingness features from `missingness_profi
         f.write(assumptions_template)
 
 
-def export_patient_attrition(df, output_dir='outputs/data_qc', window_days_pre=None, window_days_post=0):
+def export_patient_attrition(df, output_dir='outputs/data_qc', window_days_pre=7, window_days_post=0):
     """
     Build and export patient attrition counts aligned with manuscript flow-diagram wording.
 
@@ -531,7 +568,7 @@ def export_patient_attrition(df, output_dir='outputs/data_qc', window_days_pre=N
 
 def preprocess(df, data_type='train', classification_type='fibrosis', scaling=False, scaler=None,
                shap_selected=False, select_closest_patients_from_mainz=False, smote=False,
-               window_days_pre=None, window_days_post=0):
+               window_days_pre=7, window_days_post=0):
     """
     Main function for preprocessing. Preprocesses the data.
     Args:
@@ -625,7 +662,13 @@ def preprocess(df, data_type='train', classification_type='fibrosis', scaling=Fa
     # Extract preprocessed
     df.to_csv(f'../data/preprocessed_no_mice_{data_type}/{data_type}_{classification_type}.csv', index=False)
 
-    dfs = mice(df, 10)
+    # Keep the label out of the imputation model: MICE must not use 'Micro' as a
+    # predictor for the biomarkers, otherwise val/test/MAINZ features are partly
+    # reconstructed from the outcome the models are asked to predict.
+    _y = df['Micro'].to_numpy()
+    dfs = mice(df.drop('Micro', axis=1), 10)
+    for d in dfs:
+        d['Micro'] = _y
 
     if data_type == 'prospective' and smote:
         raise ValueError(
@@ -645,11 +688,18 @@ def preprocess(df, data_type='train', classification_type='fibrosis', scaling=Fa
         x = df.drop('Micro', axis=1)
 
         if shap_selected:
-            # Columns to select
-            columns_to_select = ['Thrombozyten (Mrd/l)', 'MCV (fl)', 'INR']
-            # columns_to_select = ['ASAT (U/I)', 'ALAT (U/I)', 'Age', 'Thrombozyten (Mrd/l)']  # FIB4 Marker
-            # New DataFrame with selected columns
-            x = x[columns_to_select]
+            _p = Path(__file__).resolve().parent / 'outputs' / 'shap_top_features.json'
+            if _p.exists():
+                shap_top_features = json.loads(_p.read_text(encoding='utf-8'))
+            else:
+                shap_top_features = {
+                    'fibrosis': ['Quick (%)', 'Thrombozyten (Mrd/l)', 'MCV (fl)'],
+                    'two_stage': ['Thrombozyten (Mrd/l)', 'Quick (%)', 'MCV (fl)'],
+                    'cirrhosis': ['Thrombozyten (Mrd/l)', 'Quick (%)', 'INR'],
+                    'three_stage': ['Thrombozyten (Mrd/l)', 'Quick (%)', 'Albumin (g/l)'],
+                }
+
+            x = x[shap_top_features[classification_type]]
 
         if scaling:
             # Fit the scaler on the training data and transform
@@ -665,6 +715,7 @@ def preprocess(df, data_type='train', classification_type='fibrosis', scaling=Fa
         ys.append(y)
 
         df = calculate_fib4(df, classification_type)
+        df = calculate_apri(df, classification_type)
         df.to_csv(f'../data/preprocessed_mice_fib_{data_type}/{data_type}_{classification_type}_{idx}.csv', index=False)
 
     if any(substring in data_type for substring in ['test', 'prospective']):
@@ -679,6 +730,7 @@ def preprocess(df, data_type='train', classification_type='fibrosis', scaling=Fa
     print(f'Length of data set {len(ys[0])}')
 
     return xs, ys, cols, scaler
+
 
 
 def analyze_fib4(dfs, classification_type='fibrosis', data_type='train', select_patients_from_mainz=False,
@@ -918,6 +970,65 @@ def calculate_fib_stages(value, classification_type='fibrosis'):
             return 2
     else:
         raise ValueError(f'classification_type {classification_type} is not implemented!')
+
+# =============================================================================
+# APRI score  --  paste into preprocess.py, right after calculate_fib_stages()
+# =============================================================================
+# APRI = (AST / AST_upper_limit_of_normal) / platelets * 100
+# Established cut-offs (Wai et al. 2003, later meta-analyses):
+#   significant fibrosis (>=F2):  0.5  (rule-out) / 1.5 (rule-in)
+#   cirrhosis          (F4):      1.0  (rule-out) / 2.0 (rule-in)
+# We use a single operating cut-off per task, mirroring how calculate_fib4 works,
+# so APRI enters every results table as a second guideline comparator next to FIB-4.
+#
+# AST_ULN: APRI needs an upper limit of normal for AST. Use the assay-specific
+# value from your lab; 35 U/l is the common default for mixed-sex cohorts. If your
+# reference differs, change AST_ULN once here.
+
+AST_ULN = 35.0  # U/l - adjust to your laboratory's reference if needed
+
+
+def calculate_apri(df, classification_type='fibrosis'):
+    """
+    Calculate the APRI score and its per-task binary/ordinal staging.
+
+    Args:
+        df (pd.DataFrame): Data containing 'ASAT (U/I)' and 'Thrombozyten (Mrd/l)'.
+        classification_type (str): 'fibrosis', 'two_stage', 'cirrhosis' or 'three_stage'.
+
+    Returns:
+        df (pd.DataFrame): Input with added 'APRI' and 'APRI Stages' columns.
+    """
+    df['APRI'] = ((df['ASAT (U/I)'] / AST_ULN) / df['Thrombozyten (Mrd/l)']) * 100.0
+    df['APRI Stages'] = df['APRI'].apply(
+        lambda x: calculate_apri_stages(x, classification_type=classification_type))
+    return df
+
+
+def calculate_apri_stages(value, classification_type='fibrosis'):
+    """
+    Map a continuous APRI score to the task's class using guideline cut-offs.
+
+    Cut-off rationale:
+      - >=F2 (moderate/'fibrosis', 'two_stage'): 1.5 is the widely used rule-in
+        threshold for significant fibrosis.
+      - F4 ('cirrhosis'): 2.0 is the established rule-in threshold for cirrhosis.
+      - three_stage: 1.5 separates F0/1 from F2/3, 2.0 separates F2/3 from F4.
+    """
+    if classification_type in ('fibrosis', 'two_stage'):
+        return 0 if value < 1.5 else 1
+    elif classification_type == 'cirrhosis':
+        return 0 if value < 2.0 else 1
+    elif classification_type == 'three_stage':
+        if value < 1.5:
+            return 0
+        elif value < 2.0:
+            return 1
+        else:
+            return 2
+    else:
+        raise ValueError(f'classification_type {classification_type} is not implemented!')
+
 
 
 def calculate_age(df):

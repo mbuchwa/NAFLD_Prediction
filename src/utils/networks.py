@@ -92,7 +92,7 @@ class PLTabTransformer(pl.LightningModule):
         self.num_classes = out_dim
 
         self.model = TabTransformer(
-            categories=[],
+            categories=(),
             num_continuous=len(df_cols),  # number of continuous values
             dim=hidden_dim,  # dimension, paper set at 32
             dim_out=out_dim,

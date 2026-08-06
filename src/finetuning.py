@@ -1,6 +1,6 @@
 import warnings
 from utils.helper_functions import *
-from preprocess import preprare_data
+from preprocess import prepare_data
 from src.models.tab_transformer import evaluate_ensemble_tab_transformer
 from src.models.xgb import finetune_ensemble_xgb
 from src.models.ffn import evaluate_ensemble_ffn
@@ -43,7 +43,7 @@ if __name__ == '__main__':
         scaling = True
 
     xs_train, ys_train, xs_val, ys_val, xs_test, ys_test, xs_test_umm, ys_test_umm, df_cols = \
-        preprare_data(classification_type, shap_selected, scaling, finetune=True)
+        prepare_data(classification_type, shap_selected, scaling, finetune=True)
 
     print(f'\n ----- Testing model {model_name} | Task {classification_type} ----- \n')
     print('-------------------------------------------')

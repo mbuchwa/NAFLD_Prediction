@@ -4,15 +4,15 @@ from pathlib import Path
 import numpy as np
 import os
 import pandas as pd
-from utils.helper_functions import *
-from preprocess import preprare_data
-from src.models.tab_transformer import evaluate_ensemble_tab_transformer
+from src.utils.helper_functions import *
+from src.preprocess import prepare_data
+# from src.models.tab_transformer import evaluate_ensemble_tab_transformer   # lazy-import in testing()
 from src.models.xgb import evaluate_ensemble_xgboost
-from src.models.ffn import evaluate_ensemble_ffn
+# from src.models.ffn import evaluate_ensemble_ffn                            # lazy-import in testing()
 from src.models.svm import evaluate_ensemble_svm
 from src.models.rf import evaluate_ensemble_rf
-from src.models.gandalf import evaluate_ensemble_gandalf
-from src.models.vi_bnn import evaluate_ensemble_vi_bnn
+# from src.models.gandalf import evaluate_ensemble_gandalf                    # lazy-import in testing()
+# from src.models.vi_bnn import evaluate_ensemble_vi_bnn                      # lazy-import in testing()
 from src.models.light_gmb import evaluate_ensemble_light_gbm
 from src.utils.ger_eng_dict import dict_germ_eng
 warnings.filterwarnings('ignore')
@@ -27,6 +27,7 @@ def testing(xs_test, ys_test, xs_pro, ys_pro, xs_val, ys_val, df_cols, classific
 
     # Evaluate TabTransformer
     if model_name == 'tab_transformer':
+        from src.models.tab_transformer import evaluate_ensemble_tab_transformer
         evaluate_ensemble_tab_transformer(xs_test, ys_test, xs_pro, ys_pro, xs_val, ys_val, df_cols, classification_type, shap_selected)
 
     # Evaluate XGBoost
@@ -39,10 +40,12 @@ def testing(xs_test, ys_test, xs_pro, ys_pro, xs_val, ys_val, df_cols, classific
 
     # Evaluate VI_BNN
     elif model_name == 'vi_bnn':
+        from src.models.vi_bnn import evaluate_ensemble_vi_bnn
         evaluate_ensemble_vi_bnn(xs_test, ys_test, xs_pro, ys_pro, xs_val, ys_val, df_cols, classification_type, shap_selected)
 
     # Evaluate Feed Forward Neural Network
     elif model_name == 'ffn':
+        from src.models.ffn import evaluate_ensemble_ffn
         evaluate_ensemble_ffn(xs_test, ys_test, xs_pro, ys_pro, xs_val, ys_val, df_cols, classification_type, shap_selected)
 
     # Evaluate SVM
@@ -54,8 +57,8 @@ def testing(xs_test, ys_test, xs_pro, ys_pro, xs_val, ys_val, df_cols, classific
         evaluate_ensemble_rf(xs_test, ys_test, xs_pro, ys_pro, xs_val, ys_val, df_cols, classification_type, shap_selected)
 
     elif model_name == 'gandalf':
+        from src.models.gandalf import evaluate_ensemble_gandalf
         evaluate_ensemble_gandalf(xs_test, ys_test, xs_pro, ys_pro, xs_val, ys_val, df_cols, classification_type, shap_selected)
-
 
 def export_external_class_prevalence(ys_external, output_path='outputs/external/class_prevalence.csv'):
     """
@@ -110,7 +113,7 @@ if __name__ == '__main__':
             "Set `smote = False` in src/test.py."
         )
 
-    _, _, xs_val, ys_val, xs_test, ys_test, xs_pro, ys_pro, df_cols = preprare_data(classification_type, shap_selected, scaling,
+    _, _, xs_val, ys_val, xs_test, ys_test, xs_pro, ys_pro, df_cols = prepare_data(classification_type, shap_selected, scaling,
                                                                           select_patients=select_patients, smote=smote)
 
     export_external_class_prevalence(ys_pro, output_path='outputs/external/class_prevalence.csv')

@@ -1,6 +1,11 @@
 
- Ensemble light_gbm 
-Average ACC: 76.95 | Std ACC: 3.46,
-Average F1: 66.22 | Std F1: 5.4,
-Average PPV: 72.64 | Std PPV: 7.67,
-Average TPR: 65.56 | Std TPR: 4.36
+ Ensemble light_gbm (Rubin pooled across imputations)
+
+ACC: 55.16% (95% CI 37.00%-73.32%; within_var=0.007962, between_var=0.000567)
+F1: 50.30% (95% CI 31.63%-68.98%; within_var=0.008037, between_var=0.000948)
+PPV: 50.29% (95% CI 31.47%-69.11%; within_var=0.008033, between_var=0.001079)
+TPR: 50.81% (95% CI 32.24%-69.39%; within_var=0.008037, between_var=0.000858)
+One-vs-rest AUROC and operating-point metrics (thresholds from validation Youden):
+Class F0-1 (thr=0.3514) AUROC=0.8205 [0.6565, 0.9500] Sens=0.6923 Spec=0.7778 PPV=0.6923 NPV=0.7778
+Class F2 (thr=0.3331) AUROC=0.5714 [0.3380, 0.8277] Sens=0.4286 Spec=0.5417 PPV=0.2143 NPV=0.7647
+Class F3-4 (thr=0.3168) AUROC=0.8091 [0.6410, 0.9454] Sens=0.9091 Spec=0.6500 PPV=0.5882 NPV=0.9286

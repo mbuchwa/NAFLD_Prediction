@@ -4,7 +4,7 @@ import numpy as np
 import seaborn as sns
 from scipy.stats import ks_2samp
 from scipy.stats import wasserstein_distance
-from src.preprocess import preprare_data
+from src.preprocess import prepare_data
 from src.utils.ger_eng_dict import dict_germ_eng
 
 
@@ -112,7 +112,7 @@ if __name__ == '__main__':
 
     assert classification_type in ['cirrhosis', 'fibrosis', 'three_stage', 'two_stage']
 
-    xs_train, ys_train, xs_val, ys_val, xs_test, ys_test, xs_pro, ys_pro, df_cols = preprare_data(classification_type,
+    xs_train, ys_train, xs_val, ys_val, xs_test, ys_test, xs_pro, ys_pro, df_cols = prepare_data(classification_type,
                                                                                                   shap_selected,
                                                                                                   scaling,
                                                                                                   select_patients=select_patients)

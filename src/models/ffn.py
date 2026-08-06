@@ -105,10 +105,10 @@ def hypertrain_pytorch_model(x_train, y_train, x_val, y_val, cv=5, n_iter=10, ma
 
     # sklearn KFold does not return same length of fold x and fold y if x.shape[0] % cv != 0 !
     # get the remainder
-    b = x.shape[0] % cv
-    # drop the remainder samples
-    x = x[:-1 * b]
-    y = y[:-1 * b]
+    # b = x.shape[0] % cv
+    # # drop the remainder samples
+    # x = x[:-1 * b]
+    # y = y[:-1 * b]
 
     for _ in range(n_iter):
         # Set seed

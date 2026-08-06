@@ -10,6 +10,16 @@ from te2rules.explainer import ModelExplainer
 import numpy as np
 import matplotlib.pyplot as plt
 
+# ---------------------------------------------------------------------------
+# Reproducibility settings. Keep these in sync with light_gmb.py.
+# ---------------------------------------------------------------------------
+RANDOM_STATE = 42
+N_ESTIMATORS = 500          # upper bound; early stopping decides the actual size
+N_ITER = 10                 # candidates drawn by the randomized search
+EARLY_STOPPING_ROUNDS = 10
+
+
+
 
 def hypertrain_ensemble_xgboost(xs_train, ys_train, xs_val, ys_val, xs_test, ys_test, xs_pro, ys_pro, df_cols,
                                 classification_type, shap_selected, interpret_model=True, testing=True):
@@ -23,7 +33,9 @@ def hypertrain_ensemble_xgboost(xs_train, ys_train, xs_val, ys_val, xs_test, ys_
     # Train models
     for idx, (X_train, y_train, X_val, y_val) in enumerate(zip(xs_train, ys_train, xs_val, ys_val)):
         print(f'Training model {idx}')
-        models.append(hypertrain_xgb_model(X_train, y_train, X_val, y_val, early_stopping_rounds=10))
+        models.append(hypertrain_xgb_model(X_train, y_train, X_val, y_val,
+                                           early_stopping_rounds=EARLY_STOPPING_ROUNDS,
+                                           classification_type=classification_type))
 
     # Save models
     model_path = f'models/{model_name}/model_{classification_type}.pickle'
@@ -318,61 +330,60 @@ def finetune_ensemble_xgb(xs_finetune, ys_finetune, xs_val, ys_val, xs_test, ys_
 #     return np.array(indices)
 
 
-def hypertrain_xgb_model(x_train, y_train, x_val, y_val, early_stopping_rounds=10):
+def hypertrain_xgb_model(x_train, y_train, x_val, y_val, early_stopping_rounds=EARLY_STOPPING_ROUNDS,
+                         classification_type='fibrosis', random_state=RANDOM_STATE):
     """
-    Trains a model on the provided features (x_train) and labels (y_train) with early stopping based on validation loss.
+    Trains an XGBoost model with a randomized hyperparameter search on the training
+    partition and early stopping on the validation partition.
+
+    Changes against the previous version:
+
+    1. random_state on the ESTIMATOR. Previously only RandomizedSearchCV was
+       seeded, which fixes the candidate draw but not the fitting.
+
+    2. n_jobs=1. Multithreaded histogram building is not bit-reproducible.
+
+    3. classification_type is now an argument. The previous version always used
+       the binary default, so for the three-stage task the objective did not match
+       the label cardinality. The caller must pass it through.
+
+    4. n_estimators raised so that early stopping, not the iteration cap, decides
+       the model size, matching the LightGBM configuration.
+
+    Note on class weights: XGBoost is fitted with balanced sample weights while
+    LightGBM is not. That difference is deliberate only if you intend it -- if the
+    two are meant to be comparable, either add the same weighting to LightGBM or
+    remove it here. It matters most in the external cohort, where the positive
+    class prevalence reaches 91%.
 
     Args:
-        x_train (pandas.DataFrame or numpy.ndarray): The features used for training.
-        y_train (pandas.Series or numpy.ndarray): The labels used for training.
-        x_val (pandas.DataFrame or numpy.ndarray): The features used for validation.
-        y_val (pandas.Series or numpy.ndarray): The labels used for validation.
-        early_stopping_rounds (int): Number of rounds to wait for validation loss to improve before stopping.
+        x_train, y_train: training features and labels.
+        x_val, y_val: validation features and labels, used for early stopping only.
+        early_stopping_rounds: patience on the validation partition.
+        classification_type: 'fibrosis', 'cirrhosis', 'two_stage' or 'three_stage'.
+        random_state: seed for the estimator and the search.
 
     Returns:
-        sklearn model: The trained model.
+        The refitted best estimator of the randomized search.
     """
+    if classification_type in ['fibrosis', 'cirrhosis', 'two_stage']:
+        objective_kwargs = dict(objective='binary:logistic', eval_metric='auc')
+        scoring = 'roc_auc'
+    elif classification_type == 'three_stage':
+        objective_kwargs = dict(objective='multi:softprob', num_class=3,
+                                eval_metric='mlogloss')
+        scoring = 'roc_auc_ovr'
+    else:
+        raise ValueError(f'classification_type {classification_type} is not implemented!')
 
-    """Te2Rules Explainer of a single trained XGB"""
-
-    # # ---------------------------------------------------------
-    #
-    # # model = xgb.XGBClassifier(tree_method='hist', max_depth=1, learning_rate=0.3775, subsample=0.3)
-    # model = xgb.XGBClassifier(tree_method='hist', max_depth=2, learning_rate=0.01, subsample=0.3)
-    # model.fit(x_train, y_train)
-    #
-    # accuracy = model.score(x_val, y_val)
-    #
-    # print("Accuracy")
-    # print(accuracy)
-    #
-    # model_explainer = ModelExplainer(
-    #     model=model,
-    #     feature_names=['Thrombozyten', 'MCV', 'INR']
-    # )
-    #
-    # rules = model_explainer.explain(
-    #     X=x_train, y=y_train,
-    #     num_stages=1,  # stages can be between 1 and max_depth
-    #     min_precision=0.80,  # higher min_precision can result in rules with more terms overfit on training data
-    #     jaccard_threshold=0.8  # lower jaccard_threshold speeds up the rule exploration, but can miss some good rules
-    # )
-    #
-    # print(str(len(rules)) + " rules found:")
-    # print()
-    # for i in range(len(rules)):
-    #     print("Rule " + str(i) + ": " + str(rules[i]))
-    #
-    # fidelity, positive_fidelity, negative_fidelity = model_explainer.get_fidelity()
-    #
-    # print("The rules explain " + str(round(fidelity * 100, 2)) + "% of the overall predictions of the model")
-    # print("The rules explain " + str(round(positive_fidelity * 100, 2)) + "% of the positive predictions of the model")
-    # print("The rules explain " + str(round(negative_fidelity * 100, 2)) + "% of the negative predictions of the model")
-    #
-    # breakpoint()
-    # # ---------------------------------------------------------
-
-    model = xgb.XGBClassifier(tree_method='hist', early_stopping_rounds=early_stopping_rounds)
+    model = xgb.XGBClassifier(
+        tree_method='hist',
+        n_estimators=N_ESTIMATORS,
+        early_stopping_rounds=early_stopping_rounds,
+        random_state=random_state,
+        n_jobs=1,
+        **objective_kwargs
+    )
 
     hp_space = {
         'max_depth': np.arange(1, 40),
@@ -385,17 +396,23 @@ def hypertrain_xgb_model(x_train, y_train, x_val, y_val, early_stopping_rounds=1
     clf = RandomizedSearchCV(
         estimator=model,
         param_distributions=hp_space,
-        scoring='neg_log_loss',
+        n_iter=N_ITER,
+        scoring=scoring,
         cv=5,
-        random_state=42,
+        random_state=random_state,
+        n_jobs=1,
     )
 
-    clf.fit(x_train, y_train, sample_weight=classes_weights, eval_set=[(x_val, y_val)], verbose=0)
+    clf.fit(x_train, y_train, sample_weight=classes_weights,
+            eval_set=[(x_val, y_val)], verbose=False)
 
-    print()
-    print(f'max_depth: {clf.best_estimator_.max_depth}')
-    print(f'learning_rate: {clf.best_estimator_.learning_rate}')
-    print(f'subsample: {clf.best_estimator_.subsample}')
-    print()
+    best = clf.best_estimator_
+    try:
+        n_trees = len(best.get_booster().get_dump())
+    except Exception:
+        n_trees = None
+    print(f'    best: max_depth={best.max_depth}, learning_rate={best.learning_rate:.4f}, '
+          f'subsample={best.subsample:.2f}, trees={n_trees}, '
+          f'cv_{scoring}={clf.best_score_:.4f}')
 
-    return clf.best_estimator_
+    return best

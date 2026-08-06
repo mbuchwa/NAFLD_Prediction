@@ -87,7 +87,7 @@ def _select_features(xs_list, df_cols, selected_cols):
 
 
 def run_missingness_sensitivity(classification_type='two_stage', top_n=3):
-    from preprocess import preprare_data
+    from src.preprocess import prepare_data
 
     repo_root = Path(__file__).resolve().parents[1]
     profile_path = repo_root / 'outputs' / 'data_qc' / 'missingness_profile.csv'
@@ -96,7 +96,7 @@ def run_missingness_sensitivity(classification_type='two_stage', top_n=3):
             f"Missing profiling output at {profile_path}. Run preprocessing first to generate missingness_profile.csv."
         )
 
-    xs_train, ys_train, xs_val, ys_val, xs_test, ys_test, xs_pro, ys_pro, df_cols = preprare_data(
+    xs_train, ys_train, xs_val, ys_val, xs_test, ys_test, xs_pro, ys_pro, df_cols = prepare_data(
         classification_type=classification_type,
         shap_selected=False,
         scaling=False,

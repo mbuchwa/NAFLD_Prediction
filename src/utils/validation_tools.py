@@ -13,22 +13,33 @@ CLINICAL_UTILITY_DIR = 'outputs/clinical_utility'
 MIN_SUBGROUP_SIZE_FOR_STABLE_ESTIMATE = 30
 
 
+def _prob_columns(probas_df, n_classes):
+    """pytorch_tabular renamed probability columns across versions."""
+    cols = [c for c in probas_df.columns if str(c).endswith('_probability')]
+    if len(cols) < n_classes:
+        raise ValueError(f'Expected {n_classes} probability columns, got {list(probas_df.columns)}')
+    return sorted(cols)[:n_classes]
+
+
 def _compute_external_calibration_stats(y_true, y_pred_proba):
     """
     Compute calibration diagnostics for binary predictions on external data.
     """
     y_true = np.asarray(y_true)
-    y_pred_proba = np.asarray(y_pred_proba)
-    positive_proba = y_pred_proba[:, 1]
+    y_pred_proba = np.asarray(y_pred_proba, dtype=float)
+
+    # Soft-vote outputs are summed over m models and may not be row-normalised.
+    # Renormalise each row to a valid probability distribution before calibration.
+    row_sums = y_pred_proba.sum(axis=1, keepdims=True)
+    row_sums[row_sums == 0] = 1.0
+    y_pred_proba = y_pred_proba / row_sums
+
+    positive_proba = np.clip(y_pred_proba[:, 1], 0.0, 1.0)
     clipped_proba = np.clip(positive_proba, 1e-6, 1 - 1e-6)
     logit_proba = np.log(clipped_proba / (1 - clipped_proba)).reshape(-1, 1)
 
     recalibration_model = LogisticRegression(
-        fit_intercept=True,
-        penalty='l2',
-        C=1e6,
-        solver='lbfgs',
-        max_iter=2000
+        fit_intercept=True, penalty='l2', C=1e6, solver='lbfgs', max_iter=2000
     )
     recalibration_model.fit(logit_proba, y_true)
 
@@ -47,8 +58,8 @@ def _compute_external_calibration_stats(y_true, y_pred_proba):
     }
 
 
-def _save_external_calibration_artifacts(calibration_stats, model_name, classification_type):
-    output_dir = f'outputs/{model_name}/prospective'
+def _save_external_calibration_artifacts(calibration_stats, model_name, classification_type, prospective=True):
+    output_dir = f'outputs/{model_name}/prospective' if prospective else f'outputs/{model_name}'
     os.makedirs(output_dir, exist_ok=True)
 
     plt.figure(figsize=(7, 7))
@@ -216,6 +227,132 @@ def _evaluate_multiclass_ovr(y_true, y_pred_proba, thresholds, bootstrap_n=1000)
     return rows
 
 
+FIB4_CUTOFFS = {'fibrosis': 1.45, 'two_stage': 2.67, 'cirrhosis': 3.25}
+FIB4_THREE_STAGE_CUTOFFS = (1.45, 3.25)
+
+
+def _evaluate_fib4_binary(y_true, fib4_scores, cutoff, bootstrap_n=1000):
+    """AUROC + operating metrics for the continuous FIB-4 score at a fixed cut-off."""
+    y_true = np.asarray(y_true).astype(int)
+    scores = np.asarray(fib4_scores, dtype=float)
+    n = y_true.shape[0]
+    if len(np.unique(y_true)) < 2:
+        return None
+
+    auroc = float(roc_auc_score(y_true, scores))
+
+    def auc_bootstrap(rng):
+        idx = rng.integers(0, n, n)
+        if len(np.unique(y_true[idx])) < 2:
+            return None
+        return roc_auc_score(y_true[idx], scores[idx])
+
+    auc_ci = _bootstrap_ci(auc_bootstrap, n=bootstrap_n)
+    op = _calc_binary_operating_metrics(y_true, scores, cutoff)
+    op_cis = {}
+    for metric_name in ['Sensitivity', 'Specificity', 'PPV', 'NPV']:
+        def metric_bootstrap(rng, mn=metric_name):
+            idx = rng.integers(0, n, n)
+            return _calc_binary_operating_metrics(y_true[idx], scores[idx], cutoff)[mn]
+        op_cis[metric_name] = _bootstrap_ci(metric_bootstrap, n=bootstrap_n)
+
+    return {
+        'threshold': float(cutoff),
+        'auroc': auroc,
+        'auroc_ci_lower': auc_ci[0],
+        'auroc_ci_upper': auc_ci[1],
+        'operating_metrics': op,
+        'operating_cis': op_cis,
+    }
+
+
+def _evaluate_fib4_three_stage(y_true, fib4_scores):
+    """Ordinal metrics for FIB-4 staged with the two established cut-offs."""
+    y_true = np.asarray(y_true).astype(int)
+    scores = np.asarray(fib4_scores, dtype=float)
+    lo, hi = FIB4_THREE_STAGE_CUTOFFS
+    staged = np.digitize(scores, [lo, hi])  # 0: <1.45, 1: 1.45-3.25, 2: >3.25
+    return {
+        'cutoffs': [float(lo), float(hi)],
+        'accuracy': float(np.mean(staged == y_true)),
+        'cohen_kappa_linear': float(cohen_kappa_score(y_true, staged, weights='linear')),
+        'cohen_kappa_quadratic': float(cohen_kappa_score(y_true, staged, weights='quadratic')),
+        'mae': float(mean_absolute_error(y_true, staged)),
+    }
+
+
+FIB4_CUTOFFS = {'fibrosis': 1.45, 'two_stage': 2.67, 'cirrhosis': 3.25}
+APRI_CUTOFFS = {'fibrosis': 1.5, 'two_stage': 1.5, 'cirrhosis': 2.0}
+FIB4_THREE_STAGE_CUTOFFS = (1.45, 3.25)
+APRI_THREE_STAGE_CUTOFFS = (1.5, 2.0)
+APRI_AST_ULN = 35.0  # keep in sync with AST_ULN in preprocess.py
+
+
+def _extract_apri_scores_from_features(x_matrix, df_cols):
+    """APRI = (AST / AST_ULN) / platelets * 100, from the translated feature matrix."""
+    required = ['ASAT (U/l)', 'Platelets (Billion/l)']
+    if not all(c in df_cols for c in required):
+        return None
+    f = pd.DataFrame(x_matrix, columns=df_cols)
+    denom = np.clip(f['Platelets (Billion/l)'], 1e-6, None)
+    return (((f['ASAT (U/l)'] / APRI_AST_ULN) / denom) * 100.0).to_numpy(dtype=float)
+
+
+def _evaluate_score_binary(y_true, scores, cutoff, bootstrap_n=1000):
+    """AUROC + operating metrics for a continuous score at a fixed cut-off."""
+    y_true = np.asarray(y_true).astype(int)
+    scores = np.asarray(scores, dtype=float)
+    n = y_true.shape[0]
+    if len(np.unique(y_true)) < 2:
+        return None
+    auroc = float(roc_auc_score(y_true, scores))
+
+    def auc_bootstrap(rng):
+        idx = rng.integers(0, n, n)
+        if len(np.unique(y_true[idx])) < 2:
+            return None
+        return roc_auc_score(y_true[idx], scores[idx])
+
+    auc_ci = _bootstrap_ci(auc_bootstrap, n=bootstrap_n)
+    op = _calc_binary_operating_metrics(y_true, scores, cutoff)
+    op_cis = {}
+    for mn in ['Sensitivity', 'Specificity', 'PPV', 'NPV']:
+        def mb(rng, _mn=mn):
+            idx = rng.integers(0, n, n)
+            return _calc_binary_operating_metrics(y_true[idx], scores[idx], cutoff)[_mn]
+        op_cis[mn] = _bootstrap_ci(mb, n=bootstrap_n)
+    return {'threshold': float(cutoff), 'auroc': auroc,
+            'auroc_ci_lower': auc_ci[0], 'auroc_ci_upper': auc_ci[1],
+            'operating_metrics': op, 'operating_cis': op_cis}
+
+
+def _evaluate_score_three_stage(y_true, scores, cutoffs):
+    """Ordinal metrics for a continuous score staged with two cut-offs."""
+    y_true = np.asarray(y_true).astype(int)
+    staged = np.digitize(np.asarray(scores, dtype=float), list(cutoffs))
+    return {'cutoffs': [float(c) for c in cutoffs],
+            'accuracy': float(np.mean(staged == y_true)),
+            'cohen_kappa_linear': float(cohen_kappa_score(y_true, staged, weights='linear')),
+            'cohen_kappa_quadratic': float(cohen_kappa_score(y_true, staged, weights='quadratic')),
+            'mae': float(mean_absolute_error(y_true, staged))}
+
+
+def _comparator_record(name, raw_scores, eval_y_ref, eval_proba_ref, classification_type):
+    """Build one comparator block (binary or three-stage) or None."""
+    if raw_scores is None:
+        return None
+    try:
+        if eval_proba_ref.shape[1] == 2:
+            cut = (FIB4_CUTOFFS if name == 'fib4' else APRI_CUTOFFS).get(classification_type)
+            return _evaluate_score_binary(eval_y_ref, raw_scores, cut) if cut else None
+        if classification_type == 'three_stage':
+            cuts = FIB4_THREE_STAGE_CUTOFFS if name == 'fib4' else APRI_THREE_STAGE_CUTOFFS
+            return _evaluate_score_three_stage(eval_y_ref, raw_scores, cuts)
+    except Exception as exc:
+        print(f'{name.upper()} comparator skipped: {exc}')
+    return None
+
+
 def _get_eval_output_dir(model_name, prospective):
     return f'outputs/{model_name}/prospective' if prospective else f'outputs/{model_name}'
 
@@ -376,12 +513,27 @@ def evaluate_performance(models, xs_test, ys_test, df_cols, model_name, classifi
         val_proba_ref = np.asarray(val_pred_probas[0])
 
     eval_y_ref = ys_test[0]
-    eval_proba_ref = np.asarray(ensemble_pred_probas[0])
+    eval_proba_ref = np.asarray(ensemble_pred_probas[0], dtype=float)
+
+    # Renormalise soft-vote probabilities to valid per-row distributions.
+    _row_sums = eval_proba_ref.sum(axis=1, keepdims=True)
+
+    if np.any(_row_sums <= 0):
+        raise ValueError(
+            f'{model_name}: {int((_row_sums <= 0).sum())} rows have a non-positive '
+            f'sum. Dividing by it inverts the class order. The model output is '
+            f'probably log-probabilities -- apply exp() in make_ensemble_preds_*.')
+
+    _row_sums[_row_sums == 0] = 1.0
+    eval_proba_ref = eval_proba_ref / _row_sums
     output_dir = _get_eval_output_dir(model_name, prospective)
     os.makedirs(output_dir, exist_ok=True)
     os.makedirs(CLINICAL_UTILITY_DIR, exist_ok=True)
 
     threshold_metrics_lines = []
+    binary_eval = None
+    multiclass_rows = None
+    ordinal_metrics = None
     if eval_proba_ref.shape[1] == 2:
         operating_threshold = _youden_threshold(val_y_ref, val_proba_ref[:, 1])
         binary_eval = _evaluate_binary_with_threshold(eval_y_ref, eval_proba_ref, operating_threshold, bootstrap_n=1000)
@@ -446,21 +598,20 @@ def evaluate_performance(models, xs_test, ys_test, df_cols, model_name, classifi
                     keep='last'
                 )
             new_row_df.to_csv(ordinal_metrics_path, index=False)
-    if not prospective and eval_proba_ref.shape[1] == 2:
+    if eval_proba_ref.shape[1] == 2:
         fib4_scores = _extract_fib4_scores_from_features(xs_test[0], df_cols)
         if fib4_scores is not None:
+            split_tag = 'prospective' if prospective else 'internal_test'
+            decision_curve_path = f'{CLINICAL_UTILITY_DIR}/decision_curve_{split_tag}.png'
             decision_curve_df = _decision_curve_summary(
-                y_true=eval_y_ref,
-                model_scores=eval_proba_ref[:, 1],
-                fib4_scores=_to_unit_interval(fib4_scores)
+                eval_y_ref,
+                eval_proba_ref[:, 1],
+                _to_unit_interval(fib4_scores),
             )
-            decision_curve_df.to_csv(f'{CLINICAL_UTILITY_DIR}/decision_curve_internal_test.csv', index=False)
-            decision_curve_path = f'{CLINICAL_UTILITY_DIR}/decision_curve_internal_test.png'
-            _save_decision_curve_plot(
-                decision_curve_df=decision_curve_df,
-                output_path=decision_curve_path,
-                title_suffix='internal test'
+            decision_curve_df.to_csv(
+                f'{CLINICAL_UTILITY_DIR}/decision_curve_{split_tag}.csv', index=False
             )
+            _save_decision_curve_plot(decision_curve_df, decision_curve_path, split_tag)
         else:
             print('Skipped decision curve analysis: required FIB-4 biomarker columns are unavailable.')
 
@@ -483,16 +634,19 @@ def evaluate_performance(models, xs_test, ys_test, df_cols, model_name, classifi
                 f.write(str(report))
                 f.write(str(cm))
 
-    if prospective and classification_type != 'three_stage':
+    if classification_type != 'three_stage':
         calibration_stats = _compute_external_calibration_stats(
-            y_true=ys_test[0],
-            y_pred_proba=ensemble_pred_probas[0]
+            y_true=eval_y_ref,
+            y_pred_proba=eval_proba_ref
         )
         _save_external_calibration_artifacts(
             calibration_stats=calibration_stats,
             model_name=model_name,
-            classification_type=classification_type
+            classification_type=classification_type,
+            prospective=prospective
         )
+    else:
+        calibration_stats = None
 
     pooled_metrics = pool_classification_metrics_with_rubins_rules(
         reports=ensemble_reports,
@@ -508,6 +662,60 @@ def evaluate_performance(models, xs_test, ys_test, df_cols, model_name, classifi
         )
     performance_string = '\n'.join(performance_lines) + '\n'
     performance_string += '\n'.join(threshold_metrics_lines) + '\n'
+
+    # ---- FIB-4 comparator on the very same split ----
+    fib4_record = None
+    _fib4_raw = _extract_fib4_scores_from_features(xs_test[0], df_cols)
+    if _fib4_raw is not None:
+        try:
+            if eval_proba_ref.shape[1] == 2 and classification_type in FIB4_CUTOFFS:
+                fib4_record = _evaluate_fib4_binary(
+                    eval_y_ref, _fib4_raw, FIB4_CUTOFFS[classification_type])
+            elif classification_type == 'three_stage':
+                fib4_record = _evaluate_fib4_three_stage(eval_y_ref, _fib4_raw)
+        except Exception as exc:  # never let the comparator break the run
+            print(f'FIB-4 comparator skipped: {exc}')
+    else:
+        print('FIB-4 comparator skipped: required biomarker columns unavailable.')
+
+    # ---- machine-readable record for downstream table building ----
+    # ---- FIB-4 and APRI comparators on the very same split ----
+    _fib4_raw = _extract_fib4_scores_from_features(xs_test[0], df_cols)
+    _apri_raw = _extract_apri_scores_from_features(xs_test[0], df_cols)
+    fib4_record = _comparator_record('fib4', _fib4_raw, eval_y_ref, eval_proba_ref, classification_type)
+    apri_record = _comparator_record('apri', _apri_raw, eval_y_ref, eval_proba_ref, classification_type)
+
+    structured_record = {
+        'model_name': model_name,
+        'classification_type': classification_type,
+        'split': 'prospective' if prospective else 'internal_test',
+        'n_samples': int(len(eval_y_ref)),
+        'positive_prevalence': (float(np.mean(np.asarray(eval_y_ref).astype(int)))
+                                if eval_proba_ref.shape[1] == 2 else None),
+        'pooled_rubin': {
+            m: {
+                'estimate': pooled_metrics[m]['estimate'],
+                'ci_lower': pooled_metrics[m]['ci_lower'],
+                'ci_upper': pooled_metrics[m]['ci_upper'],
+            } for m in ['ACC', 'F1', 'PPV', 'TPR']
+        },
+        'binary': binary_eval,
+        'multiclass_ovr': multiclass_rows,
+        'ordinal': ordinal_metrics,
+        'fib4': fib4_record,
+        'apri': apri_record,
+        'fib4': fib4_record,
+        'calibration': ({
+            'brier_score': calibration_stats['brier_score'],
+            'calibration_slope': calibration_stats['calibration_slope'],
+            'calibration_intercept': calibration_stats['calibration_intercept'],
+        } if calibration_stats is not None else None),
+    }
+    _record_path = f'{output_dir}/{model_name}_{classification_type}_metrics.json'
+    with open(_record_path, 'w') as f:
+        json.dump(structured_record, f, indent=2, default=float)
+    print(f'Structured metrics written to {_record_path}')
+    # ---------------------------------------------------------------
 
     print(performance_string)
 
@@ -746,7 +954,7 @@ def make_ensemble_preds_pytorch(xs_test, ys_test, models, intra_model_preds=Fals
             model.eval()
             with torch.no_grad():
                 probas_all = model(X_all.float()).detach().cpu().numpy()
-            ensemble_pred_probas.append(probas_all)
+            ensemble_pred_probas.append(np.exp(probas_all))
             ensemble_pred, probas = get_index_and_proba(probas_all.tolist())
             maj_report, cm = test(y=y_all, y_pred=ensemble_pred)
             ensemble_reports.append(maj_report)
@@ -761,7 +969,12 @@ def make_ensemble_preds_pytorch(xs_test, ys_test, models, intra_model_preds=Fals
         for model in models:
             model.eval()
             with torch.no_grad():
-                y_preds.append(model(x_tensor.float()).detach().cpu().numpy())
+                out = model(x_tensor.float()).detach().cpu().numpy()
+            # NeuralNetwork und PLTabTransformer geben log-softmax zurück
+            # (exp summiert sich auf 1). Ohne exp() bekommt majority_vote und
+            # die Renormierung in evaluate_performance negative Zeilensummen,
+            # und die Division kehrt die Klassenordnung um
+            y_preds.append(np.exp(out))
         ensemble_pred_proba = majority_vote(y_preds, rule='soft')
         ensemble_pred_probas.append(ensemble_pred_proba)
         ensemble_pred, probas = get_index_and_proba(ensemble_pred_proba)
@@ -807,10 +1020,9 @@ def make_ensemble_preds_gandalf(xs_test, ys_test, df_cols, models, classificatio
         test_data_all['target'] = y_all
         for model in models:
             probas_df_all = model.predict(test_data_all)
-            if classification_type == 'three_stage':
-                probas_all = probas_df_all[['0_probability', '1_probability', '2_probability']].values.tolist()
-            else:
-                probas_all = probas_df_all[['0_probability', '1_probability']].values.tolist()
+            n_classes = 3 if classification_type == 'three_stage' else 2
+            cols_all = _prob_columns(probas_df_all, n_classes)
+            probas_all = probas_df_all[cols_all].values.tolist()
             ensemble_pred_probas.append(probas_all)
             ensemble_pred, probas = get_index_and_proba(probas_all)
             maj_report, cm = test(y=y_all, y_pred=ensemble_pred)
@@ -826,10 +1038,9 @@ def make_ensemble_preds_gandalf(xs_test, ys_test, df_cols, models, classificatio
         y_preds = []
         for model in models:
             probas_df = model.predict(test_data)
-            if classification_type == 'three_stage':
-                y_preds.append(probas_df[['0_probability', '1_probability', '2_probability']].values.tolist())
-            else:
-                y_preds.append(probas_df[['0_probability', '1_probability']].values.tolist())
+            n_classes = 3 if classification_type == 'three_stage' else 2
+            cols = _prob_columns(probas_df, n_classes)
+            y_preds.append(probas_df[cols].values.tolist())
         ensemble_pred_proba = majority_vote(y_preds, rule='soft')
         ensemble_pred_probas.append(ensemble_pred_proba)
         ensemble_pred, probas = get_index_and_proba(ensemble_pred_proba)
@@ -989,11 +1200,9 @@ def predict_gandalf_models(data, classification_type='fibrosis'):
         model = TabularModel.load_model(f'models/gandalf/{checkpoint_file}')
         test_data = pd.DataFrame(data=data, columns=df_cols)
         probas_df = model.predict(test_data)
-        # Convert to list of lists containing class proababilities
-        if classification_type == 'three_stage':
-            y_preds.append(probas_df[['0_probability', '1_probability', '2_probability']].values.tolist())
-        else:
-            y_preds.append(probas_df[['0_probability', '1_probability']].values.tolist())
+        n_classes = 3 if classification_type == 'three_stage' else 2
+        cols = _prob_columns(probas_df, n_classes)
+        y_preds.append(probas_df[cols].values.tolist())
 
     # Perform majority voting
     maj_preds = majority_vote(y_preds, rule='soft')  # You need to implement majority_vote function
@@ -1116,9 +1325,22 @@ def predict_vi_bnn_models(data, classification_type='fibrosis'):
 def make_ensemble_preds_tab_transformer(xs_test, ys_test, models, intra_model_preds=False):
     """
     Run ensemble inference once on the full held-out dataset.
+
+    NOTE ON THE MODEL OUTPUT
+    ------------------------
+    PLTabTransformer (like NeuralNetwork) returns LOG-probabilities: the raw
+    forward pass gives values <= 0 whose exp() sums to 1 per row. They are
+    converted with np.exp() immediately after the forward pass, before anything
+    downstream sees them.
+
+    Without that conversion the row sums are negative, and the renormalisation
+    in evaluate_performance (`eval_proba_ref / _row_sums`) divides by a negative
+    number, which inverts the class order. That is what produced an apparent
+    AUROC of 0.12 instead of 0.88 for this model.
+
     Args:
-        x_test (list): List of Test matrices.
-        y_test (list): List of Test labels.
+        xs_test (list): List of Test matrices.
+        ys_test (list): List of Test labels.
         models (list): List of m PyTorch models.
         intra_model_preds (bool): If True, then redefine the ensemble preds to intra-model preds on xs[0] instead of
         majority-model vote for intra-dataset preds as xs[0] == xs[1] == xs[2] (set True for shap_selected)
@@ -1136,11 +1358,19 @@ def make_ensemble_preds_tab_transformer(xs_test, ys_test, models, intra_model_pr
     ensemble_probas = []
     ensemble_pred_probas = []
 
+    def _predict_proba(model, X):
+        """Forward pass -> per-row probability distribution."""
+        device = next(model.parameters()).device
+        x_tensor = torch.tensor(np.asarray(X), dtype=torch.float32).to(device)
+        model.eval()
+        with torch.no_grad():
+            out = model(x_tensor).detach().cpu().numpy()
+        return np.exp(out)
+
     X_all, y_all = xs_test[0], ys_test[0]
     if intra_model_preds:
-        x_tensor_all = torch.tensor(X_all, dtype=torch.float32)
         for model in models:
-            probas_all = model(x_tensor_all).detach().cpu().numpy()
+            probas_all = _predict_proba(model, X_all)
             ensemble_pred_probas.append(probas_all)
             ensemble_pred, probas = get_index_and_proba(probas_all.tolist())
             maj_report, cm = test(y=y_all, y_pred=ensemble_pred)
@@ -1151,8 +1381,7 @@ def make_ensemble_preds_tab_transformer(xs_test, ys_test, models, intra_model_pr
         return ensemble_reports, ensemble_cms, ensemble_preds, ensemble_probas, ensemble_pred_probas
 
     for X, y in zip(xs_test, ys_test):
-        x_tensor = torch.tensor(X, dtype=torch.float32)
-        y_preds = [model(x_tensor).detach().cpu().numpy() for model in models]
+        y_preds = [_predict_proba(model, X) for model in models]
         ensemble_pred_proba = majority_vote(y_preds, rule='soft')
         ensemble_pred_probas.append(ensemble_pred_proba)
         ensemble_pred, probas = get_index_and_proba(ensemble_pred_proba)

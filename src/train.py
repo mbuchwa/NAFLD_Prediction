@@ -1,6 +1,6 @@
 import warnings
-from utils.helper_functions import *
-from preprocess import preprare_data
+from src.utils.helper_functions import *
+from src.preprocess import prepare_data
 warnings.filterwarnings('ignore')
 
 
@@ -67,8 +67,8 @@ def hypertrain(xs_train, ys_train, xs_val, ys_val, xs_test, ys_test, xs_pro, ys_
 
 if __name__ == '__main__':
     model_name = 'light_gbm'
-    classification_type = 'two_stage'
-    shap_selected = True
+    classification_type = 'fibrosis'
+    shap_selected = False
     scaling = False
 
     assert model_name in ['svm', 'rf', 'xgb', 'light_gbm', 'ffn', 'gandalf', 'tab_transformer', 'mcmc_bnn', 'vi_bnn']
@@ -77,7 +77,7 @@ if __name__ == '__main__':
     if model_name == 'vi_bnn':
         scaling = True
 
-    xs_train, ys_train, xs_val, ys_val, xs_test, ys_test, xs_pro, ys_pro, df_cols = preprare_data(classification_type, shap_selected, scaling)
+    xs_train, ys_train, xs_val, ys_val, xs_test, ys_test, xs_pro, ys_pro, df_cols = prepare_data(classification_type, shap_selected, scaling)
 
     print(f'\n ----- Hypertraining model {model_name} | Task {classification_type} ----- \n')
     print('-------------------------------------------')
