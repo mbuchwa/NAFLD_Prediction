@@ -90,9 +90,9 @@ SINGLE, DOUBLE = 89 / 25.4, 183 / 25.4
 TASKS = ['fibrosis', 'two_stage', 'cirrhosis', 'three_stage']
 TASK_LABEL = {'fibrosis': 'Moderate fibrosis', 'two_stage': 'Severe fibrosis',
               'cirrhosis': 'Cirrhosis', 'three_stage': 'Three-stage'}
-TREE_MODELS = ['light_gbm', 'xgb', 'rf', 'svm']
-MODEL_LABEL = {'light_gbm': 'LightGBM', 'xgb': 'XGBoost', 'rf': 'Random Forest',
-               'svm': 'SVM'}
+
+
+
 COHORTS = ['UMM', 'MAINZ']
 TOP_N = 5
 
@@ -117,9 +117,25 @@ TOP_N = 5
 # test", not "highest AUROC".
 #
 # three_stage still needs recompute_three_stage.py to fix its entry.
-_BEST_EXTERNAL = {'fibrosis': 'light_gbm', 'two_stage': 'light_gbm',
-                  'cirrhosis': 'rf', 'three_stage': 'light_gbm'}   # <-- three_stage TBD
-BEST_MODEL_PER_TASK = {'UMM': dict(_BEST_EXTERNAL), 'MAINZ': dict(_BEST_EXTERNAL)}
+_BEST_INTERNAL = {
+    'fibrosis': 'rf',
+    'two_stage': 'ffn',
+    'cirrhosis': 'tab_transformer',
+    'three_stage': 'svm',
+}
+
+_BEST_EXTERNAL = {
+    'fibrosis': 'light_gbm',
+    'two_stage': 'light_gbm',
+    'cirrhosis': 'vi_bnn',
+    'three_stage': 'xgb',
+}
+
+BEST_MODEL_PER_TASK = {
+    'UMM': dict(_BEST_INTERNAL),
+    'MAINZ': dict(_BEST_EXTERNAL),
+}
+
 # The old one-file-per-model-and-task confusion matrices. Off by default now that
 # the combined panels exist; set True if you need them for the supplement.
 SAVE_INDIVIDUAL_CM = False

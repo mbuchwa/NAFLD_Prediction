@@ -70,10 +70,8 @@ from scipy import stats
 from sklearn.metrics import cohen_kappa_score, roc_auc_score
 
 TASK = 'three_stage'
-MODELS = [('SVM', 'svm'), ('Random Forest', 'rf'), ('XGBoost', 'xgb'),
-          ('LightGBM', 'light_gbm'), ('MLP', 'ffn'),
-          ('TabTransformer', 'tab_transformer'), ('VI-BNN', 'vi_bnn'),
-          ('GANDALF', 'gandalf')]
+MODELS = [('XGBoost', 'xgb'),
+          ('LightGBM', 'light_gbm')]
 SCALED_MODELS = {'VI-BNN'}
 N_BOOT, SEED = 1000, 0
 OUT_DIR = Path('outputs/tables')

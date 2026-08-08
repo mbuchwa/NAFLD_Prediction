@@ -2,6 +2,7 @@ from src.utils.helper_functions import *
 from src.utils.validation_tools import evaluate_performance, interpret
 from sklearn.model_selection import RandomizedSearchCV
 from sklearn.utils import class_weight
+from sklearn.metrics import make_scorer, cohen_kappa_score
 import lightgbm as lgb
 
 # ---------------------------------------------------------------------------
@@ -299,7 +300,13 @@ def hypertrain_light_gbm_model(x_train, y_train, x_val, y_val, x_test=None, y_te
         eval_metric = 'auc'
     elif classification_type == 'three_stage':
         objective_kwargs = dict(objective='multiclass', num_class=3)
-        scoring = 'roc_auc_ovr'
+        # Select on the metric that is reported. The primary metric for the
+        # ordinal task is the linearly weighted kappa, which penalises a
+        # two-stage error twice as heavily as an adjacent one. Selecting on
+        # roc_auc_ovr instead optimises class ranking and is indifferent to how
+        # far a misclassification lands -- the same mismatch that motivated the
+        # comparison of decision rules.
+        scoring = make_scorer(cohen_kappa_score, weights='linear', labels=[0, 1, 2])
         eval_metric = 'multi_logloss'
     else:
         raise ValueError(f'classification_type {classification_type} is not implemented!')

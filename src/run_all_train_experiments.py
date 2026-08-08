@@ -45,7 +45,7 @@ TRAIN_MODELS = ['svm', 'rf', 'xgb', 'light_gbm', 'ffn', 'gandalf', 'tab_transfor
 SCALING_MODELS = {'vi_bnn'}
 
 # Must equal the eval sweep (run_all_experiments.py uses False).
-SHAP_SELECTED = True
+SHAP_SELECTED = False
 
 
 # ---------------------------------------------------------------------------
