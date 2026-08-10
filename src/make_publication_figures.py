@@ -5,7 +5,7 @@ Journal-ready figures and tables for the revised manuscript.
 
     1. Fibrosis-stage histogram, UMM vs. MAINZ
     2. PCA domain-shift plot, UMM vs. MAINZ (no closest-patient overlay)
-    3. ROC curves per task, AUROC + 95% bootstrap CI in the legend
+    3. Binary-task ROC curves for all evaluated model families, AUROC + 95% bootstrap CI
     4. Patient-characteristics table
 
 SINGLE SOURCE OF TRUTH
@@ -74,8 +74,16 @@ ALL_TASKS = ['fibrosis', 'two_stage', 'cirrhosis', 'three_stage']
 ROC_TASKS = {'fibrosis': 'Moderate Fibrosis',
              'two_stage': 'Severe Fibrosis',
              'cirrhosis': 'Cirrhosis'}
-ROC_MODELS = {'light_gbm': 'LightGBM', 'xgb': 'XGBoost', 'rf': 'Random Forest',
-              'svm': 'SVM', 'vi_bnn': 'VI-BNN'}
+ROC_MODELS = {
+    'svm': 'SVM',
+    'rf': 'Random Forest',
+    'xgb': 'XGBoost',
+    'light_gbm': 'LightGBM',
+    'ffn': 'MLP',
+    'tab_transformer': 'TabTransformer',
+    'vi_bnn': 'VI-BNN',
+    'gandalf': 'GANDALF',
+}
 
 N_BOOT, SEED = 1000, 0
 SINGLE, DOUBLE = 89 / 25.4, 183 / 25.4
@@ -478,7 +486,7 @@ def characteristics_table(cols, X_umm, X_mainz, raw=None):
             src_u, src_m = pd.Series(u_imp).dropna(), pd.Series(m_imp).dropna()
         if len(src_u) > 1 and len(src_m) > 1:
             p = stats.ttest_ind(src_u, src_m, equal_var=False).pvalue
-            row['p-value'] = '<0.001' if p < 0.001 else f'{p:.3f}'
+            row['p-value'] = '$<0.001$' if p < 0.001 else f'{p:.3f}'
         else:
             row['p-value'] = '--'
         rows.append(row)
@@ -513,7 +521,7 @@ def characteristics_table(cols, X_umm, X_mainz, raw=None):
              '        ' + ' & '.join(f'\\textbf{{{c}}}' for c in order) + r'\\',
              r'        \midrule']
     for i, (_, r) in enumerate(df.iterrows()):
-        sh = r'\rowcolor{gray!10} ' if i % 2 == 0 else ''
+        sh = r'\rowcolor{customgray!40} ' if i % 2 == 0 else ''
         cells = [_tex(r[c]) if c == 'Characteristic' else str(r[c]) for c in order]
         lines.append('        ' + sh + ' & '.join(cells) + r'\\')
     lines += [r'        \bottomrule', r'    \end{tabular}', r'\end{table*}']
@@ -555,16 +563,25 @@ def roc_panel(title, curves, stem):
 
 
 def _ensemble_positive_scores(models, xs, m):
-    """Evaluate ensemble member i on imputation i, then average -- the soft
-    majority vote the manuscript describes. Falls back to imputation 0 if the
-    checkpoint holds a different number of members than there are imputations."""
+    """Evaluate member i on imputation i and soft-vote the probabilities.
+
+    The same convention is used by the manuscript evaluation pipeline. A model
+    must expose ``predict_proba``; hard predictions are never substituted for
+    probabilities.
+    """
     probas = []
     for i, mdl in enumerate(models):
         x = np.asarray(xs[i if (len(models) == m and i < m) else 0])
-        p = mdl.predict_proba(x)
-        probas.append(np.asarray(p))
+        if not hasattr(mdl, 'predict_proba'):
+            raise AttributeError(f'{type(mdl).__name__} has no predict_proba()')
+        p = np.asarray(mdl.predict_proba(x))
+        if p.ndim == 1:
+            p = np.column_stack([1.0 - p, p])
+        if p.ndim != 2 or p.shape[1] < 2:
+            raise ValueError(f'predict_proba returned invalid shape {p.shape}')
+        probas.append(p)
     p = np.mean(probas, axis=0)
-    return p[:, 1] if p.ndim == 2 and p.shape[1] > 1 else p.ravel()
+    return p[:, 1]
 
 
 def roc_curves():

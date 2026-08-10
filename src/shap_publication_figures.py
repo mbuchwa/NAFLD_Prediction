@@ -1,8 +1,9 @@
 """
 shap_publication_figures.py
 ===========================
-SHAP analyses and confusion matrices in journal-ready quality, plus the numeric
-SHAP values the manuscript tables are built from -- computed for BOTH cohorts.
+SHAP analyses plus ROC/confusion-matrix panels in journal-ready quality.
+Figures 3--6 use the per-cohort AUROC winners from Tables 1--3; Table 4 and
+Figures 7--10 use a separate, fixed set of attribution models in both cohorts.
 
 Renamed from make_publication_figures.py: a second script of that name handles
 the cohort/PCA/ROC figures, and one would silently overwrite the other in src/.
@@ -91,49 +92,72 @@ TASKS = ['fibrosis', 'two_stage', 'cirrhosis', 'three_stage']
 TASK_LABEL = {'fibrosis': 'Moderate fibrosis', 'two_stage': 'Severe fibrosis',
               'cirrhosis': 'Cirrhosis', 'three_stage': 'Three-stage'}
 
+# Models for which SHAP is computed. Keep this restricted to models for which the
+# current SHAP pipeline is established and reproducible.
+SHAP_MODELS = ['light_gbm', 'xgb', 'rf', 'svm']
 
+# Models that may be selected for ROC/confusion-matrix figures. These correspond
+# to the model families reported in Tables 1--3.
+EVAL_MODELS = ['svm', 'rf', 'xgb', 'light_gbm', 'ffn',
+               'tab_transformer', 'vi_bnn', 'gandalf']
 
+MODEL_LABEL = {
+    'svm': 'SVM',
+    'rf': 'Random Forest',
+    'xgb': 'XGBoost',
+    'light_gbm': 'LightGBM',
+    'ffn': 'MLP',
+    'tab_transformer': 'TabTransformer',
+    'vi_bnn': 'VI-BNN',
+    'gandalf': 'GANDALF',
+}
 COHORTS = ['UMM', 'MAINZ']
 TOP_N = 5
 
-# Best ensemble per task and cohort -- the model whose confusion matrix goes into
-# the combined 2x2 panel. Edit here if the ranking changes after a re-run.
-# Selection rule: the model with the highest AUROC in the EXTERNAL cohort, applied
-# to both cohorts. Rationale: with n=31 the internal ranking is not resolvable --
-# the confidence intervals of all four models overlap almost completely, and the
-# internal winner changes between tasks (SVM leads for cirrhosis). Picking per
-# cohort would also mean the confusion panels show different models internally
-# and externally, which makes them incomparable.
+# ---------------------------------------------------------------------------
+# Model selection for Figures 3--6
+# ---------------------------------------------------------------------------
+# Selection rule: highest observed AUROC in the respective evaluation cohort,
+# matching Tables 1--3. For the ordinal three-stage task the ranking criterion is
+# macro one-vs-rest AUROC.
 #
-# Values from the stratified-split run (2026-08-02/03), external cohort:
-#   fibrosis  LightGBM 0.865 | two_stage LightGBM 0.925 | cirrhosis VI-BNN 0.906
+# UMM (n=31):
+#   moderate fibrosis -> Random Forest (0.859)
+#   severe fibrosis   -> MLP (0.920)
+#   cirrhosis         -> TabTransformer (0.900)
+#   three-stage       -> SVM (macro OvR AUROC 0.767)
 #
-# For cirrhosis the nominal leader is VI-BNN, but the paired bootstrap on the
-# same 284 patients gives dAUROC +0.018 (-0.012, +0.052), p=0.247 against Random
-# Forest -- not separable. TabTransformer and LightGBM are likewise within noise;
-# only XGBoost and below separate. Random Forest is therefore used, which keeps
-# the model family consistent across all tasks. State that rule in the captions:
-# "highest AUROC among models that are not separable from the leader by a paired
-# test", not "highest AUROC".
-#
-# three_stage still needs recompute_three_stage.py to fix its entry.
-_BEST_INTERNAL = {
-    'fibrosis': 'rf',
-    'two_stage': 'ffn',
-    'cirrhosis': 'tab_transformer',
-    'three_stage': 'svm',
+# MAINZ (n=284):
+#   moderate fibrosis -> LightGBM (0.865)
+#   severe fibrosis   -> LightGBM (0.925)
+#   cirrhosis         -> VI-BNN (0.906)
+#   three-stage       -> XGBoost (macro OvR AUROC 0.844)
+BEST_EVAL_MODEL_PER_TASK = {
+    'UMM': {
+        'fibrosis': 'rf',
+        'two_stage': 'ffn',
+        'cirrhosis': 'tab_transformer',
+        'three_stage': 'svm',
+    },
+    'MAINZ': {
+        'fibrosis': 'light_gbm',
+        'two_stage': 'light_gbm',
+        'cirrhosis': 'vi_bnn',
+        'three_stage': 'xgb',
+    },
 }
 
-_BEST_EXTERNAL = {
+# ---------------------------------------------------------------------------
+# Model selection for Table 4 / Figures 7--10 (attribution analysis)
+# ---------------------------------------------------------------------------
+# These are deliberately separate from the per-cohort performance winners above.
+# The same UMM-trained model is explained in both cohorts, which makes the SHAP
+# rank comparison interpretable under domain shift.
+SHAP_MODEL_PER_TASK = {
     'fibrosis': 'light_gbm',
     'two_stage': 'light_gbm',
-    'cirrhosis': 'vi_bnn',
-    'three_stage': 'xgb',
-}
-
-BEST_MODEL_PER_TASK = {
-    'UMM': dict(_BEST_INTERNAL),
-    'MAINZ': dict(_BEST_EXTERNAL),
+    'cirrhosis': 'rf',
+    'three_stage': 'light_gbm',
 }
 
 # The old one-file-per-model-and-task confusion matrices. Off by default now that
@@ -431,29 +455,68 @@ def confusion_plot(cm, classes, title, stem):
     save(fig, stem)
 
 
+def _predict_proba(model, x):
+    """Return a NumPy probability matrix for one fitted model.
+
+    All model wrappers used in the manuscript evaluation are expected to expose
+    ``predict_proba``. Failing loudly here is preferable to silently treating hard
+    class predictions as probabilities.
+    """
+    if not hasattr(model, 'predict_proba'):
+        raise AttributeError(
+            f'{type(model).__name__} has no predict_proba(); '
+            'use the same inference wrapper as the manuscript evaluation pipeline.'
+        )
+    p = np.asarray(model.predict_proba(np.asarray(x)))
+    if p.ndim == 1:
+        p = np.column_stack([1.0 - p, p])
+    if p.ndim != 2:
+        raise ValueError(f'predict_proba returned shape {p.shape}, expected (n, classes)')
+    return p
+
+
 def _ensemble_proba(models, xs):
     """Soft-vote ensemble probability, member i evaluated on imputation i.
 
-    That is the ensemble the manuscript describes. Evaluating every member on
-    imputation 0 instead mixes a model with an imputation it never saw and
-    understates the ensemble's agreement.
+    This mirrors the ensemble definition used throughout the manuscript: each
+    ensemble member is applied to the matching imputed dataset and the resulting
+    class probabilities are averaged patient-wise.
     """
     xs = xs if isinstance(xs, (list, tuple)) else [xs]
     probas = []
     for i, mdl in enumerate(models):
         x = np.asarray(xs[i] if i < len(xs) else xs[0])
-        probas.append(np.asarray(mdl.predict_proba(x)))
+        probas.append(_predict_proba(mdl, x))
+    shapes = {p.shape for p in probas}
+    if len(shapes) != 1:
+        raise ValueError(f'Ensemble members returned incompatible probability shapes: {shapes}')
     return np.mean(probas, axis=0)
 
 
-def _roc_with_ci(y, score, n_boot=N_BOOT, seed=SEED):
-    """ROC on a common FPR grid plus a percentile bootstrap band."""
+def _youden_threshold(y, score):
+    """Youden threshold determined on the UMM validation partition only."""
+    from sklearn.metrics import roc_curve
+    y = np.asarray(y).astype(int).ravel()
+    score = np.asarray(score).ravel()
+    fpr, tpr, thresholds = roc_curve(y, score)
+    j = tpr - fpr
+    finite = np.isfinite(thresholds)
+    if finite.any():
+        idxs = np.flatnonzero(finite)
+        best = idxs[np.argmax(j[finite])]
+    else:
+        best = int(np.argmax(j))
+    return float(thresholds[best])
+
+
+def _binary_roc_with_ci(y, score, n_boot=N_BOOT, seed=SEED):
+    """Binary ROC on a common FPR grid with patient-level bootstrap CI."""
     from sklearn.metrics import roc_curve, roc_auc_score
     y, score = np.asarray(y), np.asarray(score)
     grid = np.linspace(0, 1, 201)
     fpr, tpr, _ = roc_curve(y, score)
     base = np.interp(grid, fpr, tpr)
-    base[0] = 0.0
+    base[0], base[-1] = 0.0, 1.0
     auc = roc_auc_score(y, score)
 
     rng = np.random.default_rng(seed)
@@ -463,28 +526,68 @@ def _roc_with_ci(y, score, n_boot=N_BOOT, seed=SEED):
         if len(np.unique(y[idx])) < 2:
             continue
         f, t, _ = roc_curve(y[idx], score[idx])
-        c = np.interp(grid, f, t); c[0] = 0.0
+        c = np.interp(grid, f, t)
+        c[0], c[-1] = 0.0, 1.0
         curves.append(c)
         aucs.append(roc_auc_score(y[idx], score[idx]))
     if curves:
-        band = (np.percentile(curves, 2.5, axis=0), np.percentile(curves, 97.5, axis=0))
-        ci = (float(np.percentile(aucs, 2.5)), float(np.percentile(aucs, 97.5)))
+        band = (np.percentile(curves, 2.5, axis=0),
+                np.percentile(curves, 97.5, axis=0))
+        ci = (float(np.percentile(aucs, 2.5)),
+              float(np.percentile(aucs, 97.5)))
     else:
         band, ci = (base, base), (np.nan, np.nan)
     return grid, base, band, float(auc), ci
 
 
-def _macro_ovr_score(proba, y, n_cls):
-    """Macro-average one-vs-rest ROC input for the ordinal task.
-
-    Returns (y_bin, score) stacked over the classes, which yields the
-    macro-average curve when passed to roc_curve.
-    """
-    ys, ss = [], []
+def _macro_ovr_curve(y, proba, grid=None):
+    """True macro one-vs-rest ROC curve and AUROC for the three-stage task."""
+    from sklearn.metrics import roc_curve, roc_auc_score
+    y = np.asarray(y).astype(int).ravel()
+    proba = np.asarray(proba)
+    n_cls = proba.shape[1]
+    grid = np.linspace(0, 1, 201) if grid is None else np.asarray(grid)
+    curves, aucs = [], []
     for c in range(n_cls):
-        ys.append((np.asarray(y) == c).astype(int))
-        ss.append(proba[:, c])
-    return np.concatenate(ys), np.concatenate(ss)
+        yc = (y == c).astype(int)
+        if len(np.unique(yc)) < 2:
+            raise ValueError(f'Class {c} is absent in the evaluation sample')
+        fpr, tpr, _ = roc_curve(yc, proba[:, c])
+        t = np.interp(grid, fpr, tpr)
+        t[0], t[-1] = 0.0, 1.0
+        curves.append(t)
+        aucs.append(roc_auc_score(yc, proba[:, c]))
+    return np.mean(curves, axis=0), float(np.mean(aucs))
+
+
+def _macro_ovr_roc_with_ci(y, proba, n_boot=N_BOOT, seed=SEED):
+    """Macro OvR ROC with patient-level bootstrap CI for the ordinal task."""
+    y = np.asarray(y).astype(int).ravel()
+    proba = np.asarray(proba)
+    n_cls = proba.shape[1]
+    grid = np.linspace(0, 1, 201)
+    base, auc = _macro_ovr_curve(y, proba, grid)
+
+    rng = np.random.default_rng(seed)
+    curves, aucs = [], []
+    for _ in range(n_boot):
+        idx = rng.integers(0, len(y), len(y))
+        if len(np.unique(y[idx])) < n_cls:
+            continue
+        try:
+            c, a = _macro_ovr_curve(y[idx], proba[idx], grid)
+        except ValueError:
+            continue
+        curves.append(c)
+        aucs.append(a)
+    if curves:
+        band = (np.percentile(curves, 2.5, axis=0),
+                np.percentile(curves, 97.5, axis=0))
+        ci = (float(np.percentile(aucs, 2.5)),
+              float(np.percentile(aucs, 97.5)))
+    else:
+        band, ci = (base, base), (np.nan, np.nan)
+    return grid, base, band, float(auc), ci
 
 
 def roc_panel_combined(cohort, entries, stem):
@@ -497,7 +600,8 @@ def roc_panel_combined(cohort, entries, stem):
     and carry
     the same numbers less legibly.
 
-    entries: {task: (y, score, n, model_label, is_macro)}
+    entries: {task: (y, score_or_proba, n, model_label, is_macro)}
+    Binary tasks carry P(class=1); three-stage carries the full probability matrix.
     """
     from matplotlib.gridspec import GridSpec, GridSpecFromSubplotSpec
 
@@ -514,7 +618,10 @@ def roc_panel_combined(cohort, entries, stem):
     stats_rows = []
     for task in rows:
         y, score, n, model_label, is_macro = entries[task]
-        grid, base, band, auc, ci = _roc_with_ci(y, score)
+        if is_macro:
+            grid, base, band, auc, ci = _macro_ovr_roc_with_ci(y, score)
+        else:
+            grid, base, band, auc, ci = _binary_roc_with_ci(y, score)
         col = ROC_COLOURS[task]
         if ROC_CI_BANDS:
             ax.fill_between(grid, band[0], band[1], color=col, alpha=0.10,
@@ -659,35 +766,91 @@ def main():
     roc_entries = {c: {} for c in COHORTS}
     shap_bars = {c: {} for c in COHORTS}
     shap_swarms = {c: {} for c in COHORTS}
+
     for task in TASKS:
         print(f'\n=== {task} ===')
-        (xs_train, _, _, _, xs_test, ys_test,
+        (xs_train, ys_train, xs_val, ys_val, xs_test, ys_test,
          xs_pro, ys_pro, df_cols_de) = prepare_data(task, False, False)
         feats = [dict_germ_eng.get(c, c) for c in df_cols_de]
         n_cls = 3 if task == 'three_stage' else 2
         classes = ['F0-1', 'F2-3', 'F4'] if n_cls == 3 else ['Negative', 'Positive']
-        data = {'UMM': (np.asarray(xs_test[0]), np.asarray(ys_test[0])),
-                'MAINZ': (np.asarray(xs_pro[0]), np.asarray(ys_pro[0]))}
-        imputations = {'UMM': xs_test, 'MAINZ': xs_pro}
-        global N_UMM, N_MAINZ
-        N_UMM, N_MAINZ = len(data['UMM'][1]), len(data['MAINZ'][1])
 
-        for model in TREE_MODELS:
+        y_val = np.asarray(ys_val[0]).ravel()
+        y_umm = np.asarray(ys_test[0]).ravel()
+        y_mainz = np.asarray(ys_pro[0]).ravel()
+        data = {'UMM': (np.asarray(xs_test[0]), y_umm),
+                'MAINZ': (np.asarray(xs_pro[0]), y_mainz)}
+        imputations = {'VAL': xs_val, 'UMM': xs_test, 'MAINZ': xs_pro}
+
+        global N_UMM, N_MAINZ
+        N_UMM, N_MAINZ = len(y_umm), len(y_mainz)
+
+        # ---------------------------------------------------- Figures 3--6 ---
+        selected_keys = set(BEST_EVAL_MODEL_PER_TASK[c][task] for c in COHORTS)
+        eval_cache = {}
+        threshold_cache = {}
+
+        for model in selected_keys:
+            if model not in EVAL_MODELS:
+                raise ValueError(f'{model} is selected for evaluation but absent from EVAL_MODELS')
             path = Path(f'models/{model}/model_{task}.pickle')
             if not path.exists():
-                print(f'  {model}: no checkpoint - skipped')
+                print(f'  !! selected evaluation model missing: {path}')
+                continue
+            with open(path, 'rb') as fh:
+                eval_cache[model] = pickle.load(fh)
+            print(f'  eval {model}: {len(eval_cache[model])} ensemble members')
+
+            if n_cls == 2:
+                p_val = _ensemble_proba(eval_cache[model], imputations['VAL'])[:, 1]
+                threshold_cache[model] = _youden_threshold(y_val, p_val)
+                print(f'    validation Youden threshold = {threshold_cache[model]:.6f}')
+
+        for cohort in COHORTS:
+            model = BEST_EVAL_MODEL_PER_TASK[cohort][task]
+            if model not in eval_cache:
+                print(f'  {cohort}/{task}: selected model {model} unavailable; panel cell skipped')
+                continue
+            models = eval_cache[model]
+            lbl = MODEL_LABEL[model]
+            y = data[cohort][1]
+            proba = _ensemble_proba(models, imputations[cohort])
+
+            if n_cls == 2:
+                threshold = threshold_cache[model]
+                pred = (proba[:, 1] >= threshold).astype(int)
+                roc_entries[cohort][task] = (y, proba[:, 1], len(y), lbl, False)
+            else:
+                pred = proba.argmax(axis=1)
+                if ROC_INCLUDE_THREE_STAGE:
+                    roc_entries[cohort][task] = (y, proba, len(y), lbl, True)
+
+            cm = confusion_matrix(y, pred, labels=range(n_cls))
+            panels[cohort][task] = (cm, classes, len(y), lbl,
+                                    _cm_metrics(cm, y, pred))
+            if SAVE_INDIVIDUAL_CM:
+                confusion_plot(cm, classes,
+                               f'{TASK_LABEL[task]} - {lbl} ({cohort})',
+                               f'confusion_{model}_{task}_{cohort.lower()}')
+
+        # ------------------------------------------------- Table 4 / SHAP ---
+        for model in SHAP_MODELS:
+            path = Path(f'models/{model}/model_{task}.pickle')
+            if not path.exists():
+                print(f'  SHAP {model}: no checkpoint - skipped')
                 continue
             with open(path, 'rb') as fh:
                 models = pickle.load(fh)
             lbl = MODEL_LABEL.get(model, model)
-            print(f'  {model}: {len(models)} ensemble members')
+            print(f'  SHAP {model}: {len(models)} ensemble members')
 
             means = {}
             for cohort in COHORTS:
                 x, y = data[cohort]
                 signed, abs_means = shap_per_member(
                     models, np.asarray(xs_train[0]), x, n_cls)
-                mean_abs, sd_abs = abs_means.mean(0), abs_means.std(0, ddof=1)
+                mean_abs = abs_means.mean(0)
+                sd_abs = abs_means.std(0, ddof=1)
                 means[cohort] = mean_abs
 
                 out = pd.DataFrame(abs_means, columns=feats)
@@ -695,7 +858,6 @@ def main():
                 out.to_csv(FIGDIR / f'shap_values_{model}_{task}_{cohort.lower()}.csv',
                            index=False)
 
-                # ensemble attribution: mean SHAP across members, not member 0
                 sv_ens = np.mean(signed, axis=0)
                 if SAVE_INDIVIDUAL_SHAP:
                     cls_note = ' (F4 class)' if n_cls == 3 else ''
@@ -705,7 +867,8 @@ def main():
                     bar_plot(mean_abs, sd_abs, feats,
                              f'{TASK_LABEL[task]} - {lbl} - {cohort}',
                              f'shap_bar_{model}_{task}_{cohort.lower()}')
-                if BEST_MODEL_PER_TASK.get(cohort, {}).get(task) == model:
+
+                if SHAP_MODEL_PER_TASK.get(task) == model:
                     shap_bars[cohort][task] = (mean_abs, sd_abs, feats, lbl)
                     shap_swarms[cohort][task] = (sv_ens, x, feats, lbl)
 
@@ -715,21 +878,6 @@ def main():
                     table_rows.append(dict(task=task, model=lbl, cohort=cohort,
                                            feature=feats[i], rank=int(ranks[i]),
                                            mean_abs_shap=mean_abs[i], sd=sd_abs[i]))
-
-                proba = _ensemble_proba(models, imputations[cohort])
-                pred = proba.argmax(1)
-                cm = confusion_matrix(y, pred, labels=range(n_cls))
-                if SAVE_INDIVIDUAL_CM:
-                    confusion_plot(cm, classes, f'{TASK_LABEL[task]} - {lbl} ({cohort})',
-                                   f'confusion_{model}_{task}_{cohort.lower()}')
-                if BEST_MODEL_PER_TASK.get(cohort, {}).get(task) == model:
-                    panels[cohort][task] = (cm, classes, len(y), lbl,
-                                            _cm_metrics(cm, y, pred))
-                    if n_cls == 2:
-                        roc_entries[cohort][task] = (y, proba[:, 1], len(y), lbl, False)
-                    elif ROC_INCLUDE_THREE_STAGE:
-                        yb, sc = _macro_ovr_score(proba, y, n_cls)
-                        roc_entries[cohort][task] = (yb, sc, len(y), lbl, True)
 
             if len(means) == 2:
                 rho = stats.spearmanr(means['UMM'], means['MAINZ']).statistic
@@ -749,12 +897,13 @@ def main():
         if panels[cohort]:
             missing = [t for t in TASKS if t not in panels[cohort]]
             if missing:
-                print(f'\n{cohort} panel: no checkpoint for '
-                      f'{", ".join(BEST_MODEL_PER_TASK[cohort][t] + "/" + t for t in missing)} '
-                      f'-- those cells stay empty')
+                print(f'\n{cohort} confusion panel missing: {", ".join(missing)}')
             confusion_panel(cohort, panels[cohort],
                             f'confusion_panel_{cohort.lower()}')
         if roc_entries[cohort]:
+            missing = [t for t in TASKS if t not in roc_entries[cohort]]
+            if missing:
+                print(f'\n{cohort} ROC panel missing: {", ".join(missing)}')
             roc_panel_combined(cohort, roc_entries[cohort],
                                f'roc_panel_{cohort.lower()}')
         if shap_bars[cohort]:
@@ -764,10 +913,10 @@ def main():
                                 f'shap_beeswarm_panel_{cohort.lower()}')
 
     if agreement_rows:
-        ag = pd.DataFrame(agreement_rows)
-        ag.to_csv(FIGDIR / 'shap_rank_agreement.csv', index=False)
+        ag_df = pd.DataFrame(agreement_rows)
+        ag_df.to_csv(FIGDIR / 'shap_rank_agreement.csv', index=False)
         print('\nCross-cohort rank agreement:')
-        print(ag.to_string(index=False))
+        print(ag_df.to_string(index=False))
 
     if table_rows:
         df = pd.DataFrame(table_rows)
@@ -777,12 +926,13 @@ def main():
 
         lines = [r'\begin{table*}[htbp]', r'    \centering',
                  r'    \caption{\small{Five most influential biomarkers per task for the',
-                 r'    best-performing model. The two cohorts are ranked independently: the left',
+                 r'    models selected for attribution analysis. The same UMM-trained model is',
+                 r'    explained in both cohorts; the two cohorts are ranked independently. The left',
                  f'    block gives the top five on the held-out UMM test partition (n={N_UMM}), the',
                  f'    right block the top five on the external MAINZ cohort (n={N_MAINZ}), each by the',
                  r'    mean absolute SHAP value of the ensemble. Values are mean $\pm$ standard',
                  r'    deviation across the $m=10$ ensemble members; the number in parentheses is',
-                 r'    that biomarker\'s rank in the respective other cohort. $\rho$ is the Spearman',
+                 r"    that biomarker's rank in the respective other cohort. $\rho$ is the Spearman",
                  r'    correlation between the two full rankings over all biomarkers.}}',
                  r'    \label{tab:shap_top5}',
                  r'    \begin{tabular}{clclc}', r'        \toprule',
@@ -797,30 +947,25 @@ def main():
             sub = df[df.task == task]
             if sub.empty:
                 continue
-            # Use the model named in BEST_MODEL_PER_TASK, not whichever row happens
-            # to come first. sub.model.iloc[0] was always 'LightGBM' because
-            # table_rows is filled in TREE_MODELS order -- which made Table 4 and
-            # Figures 7-10 report different models for the same task.
-            best_key = BEST_MODEL_PER_TASK['MAINZ'].get(task)
-            best = MODEL_LABEL.get(best_key, best_key)
-            if best not in set(sub.model):
-                best = sub.model.iloc[0]
-                print(f'  Table 4/{task}: {best_key} not among TREE_MODELS, '
-                      f'falling back to {best}')
-            sub = sub[sub.model == best]
+            selected_key = SHAP_MODEL_PER_TASK.get(task)
+            selected = MODEL_LABEL.get(selected_key, selected_key)
+            if selected not in set(sub.model):
+                print(f'  Table 4/{task}: selected SHAP model {selected_key} missing; skipped')
+                continue
+            sub = sub[sub.model == selected]
             u = sub[sub.cohort == 'UMM'].set_index('feature')
             m = sub[sub.cohort == 'MAINZ'].set_index('feature')
             u_top = u.sort_values('rank').head(TOP_N)
             m_top = m.sort_values('rank').head(TOP_N)
 
-            head = f'\\textit{{{TASK_LABEL[task]}}} ({best})'
-            info = ag.get((task, best))
+            head = f'\\textit{{{TASK_LABEL[task]}}} ({selected})'
+            info = ag.get((task, selected))
             if info:
                 head += (f' --- $\\rho$ = {info["spearman_rho"]:.3f}, '
                          f'top-5 overlap {info["top5_overlap"]}')
             lines.append(f'        \\multicolumn{{5}}{{l}}{{{head}}}\\\\')
 
-            for k in range(TOP_N):
+            for k in range(min(TOP_N, len(u_top), len(m_top))):
                 fu, fm = u_top.index[k], m_top.index[k]
                 ru = f'{_tex(fu)} ({int(m.loc[fu, "rank"])})' if fu in m.index else _tex(fu)
                 rm = f'{_tex(fm)} ({int(u.loc[fm, "rank"])})' if fm in u.index else _tex(fm)
@@ -831,7 +976,10 @@ def main():
                     f'{m_top.iloc[k].mean_abs_shap:.3f} $\\pm$ {m_top.iloc[k].sd:.3f}\\\\')
             lines.append(r'        \midrule')
 
-        lines[-1] = r'        \bottomrule'
+        if lines[-1] == r'        \midrule':
+            lines[-1] = r'        \bottomrule'
+        else:
+            lines.append(r'        \bottomrule')
         lines += [r'    \end{tabular}', r'\end{table*}']
         (FIGDIR / 'shap_top5_table.tex').write_text('\n'.join(lines), encoding='utf-8')
         print(f'\nLaTeX table -> {FIGDIR}/shap_top5_table.tex')
