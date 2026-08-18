@@ -1,6 +1,6 @@
 # Python module execution and data-flow audit
 
-This maintainer reference covers **all 57 tracked Python files under `src/`**. It was built with AST import inspection and repository-wide import and string-reference searches, rather than names alone. It records paths and contracts only—no row values, private-data contents, or patient identifiers.
+This maintainer reference covers the Python entry points and modules under `src/`, including compatibility wrappers for archived implementations. It was built with AST import inspection and repository-wide import and string-reference searches, rather than names alone. It records paths and contracts only—no row values, private-data contents, or patient identifiers.
 
 ## Reading the inventory
 
@@ -11,8 +11,8 @@ The pipeline's effective working directory is normally `src`: `../data` means th
 | File | Class | Importers / dependencies | Invocation; inputs | Outputs / mode / consumers |
 |---|---|---|---|---|
 | `aggregate_results.py` | primary | CLI; numpy, pandas | script; metrics JSON under `outputs/`; no checkpoint | results long CSV and workbook; **report**; manuscript tables |
-| `apply_patch_comparators.py` | legacy | CLI; AST utilities | script only; `utils/validation_tools.py` | edits target plus `.bak`; **code patch only**; test sweep. Already integrated—do not run normally. |
-| `apply_patch_fib4.py` | legacy | CLI; AST utilities | script only; same target | edits target plus `.bak`; **code patch only**; superseded by comparator/current code |
+| `apply_patch_comparators.py` | legacy compatibility wrapper | CLI; `runpy` | script only; delegates to `misc/legacy/apply_patch_comparators.py` without changing arguments or cwd | archived code migration; already integrated—do not run normally. |
+| `apply_patch_fib4.py` | legacy compatibility wrapper | CLI; `runpy` | script only; delegates to `misc/legacy/apply_patch_fib4.py` without changing arguments or cwd | archived code migration; superseded by comparator/current code |
 | `check_split_stratification.py` | QC | CLI; preprocess, numpy/pandas/sklearn | `-m`/script, forces `src`; raw workbooks | stdout; **report**; split diagnosis |
 | `check_table_figure_consistency.py` | QC | CLI; preprocess, neural_loaders, sklearn | `-m`/script, forces `src`; prepared cohorts, reference table/figure, family checkpoints | robustness consistency CSV; **evaluate/report**; checkpoint reconciliation |
 | `clinical_utility_from_checkpoints.py` | auxiliary | CLI; preprocess, neural_loaders, scipy/sklearn/matplotlib/torch | `-m`/script, forces `src`; prepared cohorts; tree/neural checkpoints and prescribed two-stage fallback | calibration, predictions and decision-curve CSV/PNG/PDF under `outputs/clinical_utility`; **evaluate/report**; manuscript |
@@ -48,7 +48,7 @@ The pipeline's effective working directory is normally `src`: `../data` means th
 | `test.py` | primary | run_all_tests; preprocess, translation map, selected models | module/direct script from `src`; cohorts/checkpoints | evaluation metrics/predictions/plots and prevalence CSV; **evaluate**; sweep/aggregators |
 | `test_training_determinism.py` | QC | CLI; preprocess, LightGBM/sklearn | `-m`/script, forces `src`; prepared data; no checkpoint | stdout, explicitly no persistent write; **temporary train/QC**; retraining decision |
 | `train.py` | primary | train-all; preprocess, all model modules | module/direct script from `src`; prepared cohorts | family checkpoints/params/evaluation outputs; **train**; testing/reporters |
-| `variance_test_datasets.py` | exploratory | CLI; scipy/statsmodels/sklearn/pandas | **import-time script** from `src`; exact cirrhosis imputation-0 test/prospective CSVs | interactive plots/stdout; **report**; no tracked consumer |
+| `variance_test_datasets.py` | exploratory compatibility wrapper | CLI; `runpy` | script from `src`; delegates to `misc/exploratory/variance_test_datasets.py` without changing arguments or cwd; exact cirrhosis imputation-0 test/prospective CSVs | interactive plots/stdout; **report**; no tracked consumer |
 
 ## `src/models/`: shared implementations
 
@@ -59,7 +59,7 @@ These are module APIs (no supported standalone invocation), expect caller cwd `s
 | `models/ffn.py` | train/test/finetuning; helpers, validation, networks, torch/Lightning | per-task/member `.pth` plus params and outputs; **train/evaluate** |
 | `models/gandalf.py` | train/test/finetuning; helpers/validation, pytorch-tabular | pytorch-tabular per-member artifacts, `df_cols.txt`, params; **train/evaluate**; not plain state dict format |
 | `models/light_gmb.py` | train/test/finetuning and window/missingness/determinism; LightGBM/sklearn | task pickle, optional finetuned/window pickles; **train/evaluate** |
-| `models/mcmc_bnn.py` | train only; helpers, Pyro/torch/SHAP | model state **and separate posterior-sample** `.pth`, params, MCMC metrics/SHAP; **train/evaluate, legacy/experimental**. Its evaluator reads `model_params__...` (double underscore) although training writes `model_params_...`; repair before relying on evaluation. It is absent from `test.py` and `neural_loaders`. |
+| `models/mcmc_bnn.py` | train only; helpers, Pyro/torch/SHAP | model state **and separate posterior-sample** `.pth`, params, MCMC metrics/SHAP; **train/evaluate, legacy/experimental**. Its evaluator reads `model_params__...` (double underscore) although training writes `model_params_...`; repair before relying on evaluation. `test.py` accepts its identifier but does not wire an evaluation branch, and it is absent from `neural_loaders`. |
 | `models/rf.py` | train/test/finetuning; helpers/validation/sklearn | task and finetuned pickles; **train/evaluate** |
 | `models/svm.py` | train/test/finetuning; helpers/validation/sklearn | task pickle; **train/evaluate** |
 | `models/tab_transformer.py` | train/test/finetuning; helpers/validation/networks, torch | member `.pth`, column/parameter metadata; **train/evaluate** |
@@ -84,6 +84,26 @@ These are module APIs (no supported standalone invocation), expect caller cwd `s
 
 1. Both `apply_patch_*` scripts are migration aids, not experiments; current comparator code is already integrated.
 2. `select_test_datasets.py` and `utils/smote.py` are libraries, not dataset scripts. Only the former is connected.
-3. `variance_test_datasets.py` and `utils/convert_amainz_dat.py` execute on import.
+3. The archived `misc/exploratory/variance_test_datasets.py` implementation and `utils/convert_amainz_dat.py` execute on import; the `src/variance_test_datasets.py` compatibility wrapper executes the former only when used as a script.
 4. SHAP variants collide on output names. Prefer v2 for native tree and neural formats, and isolate outputs when comparing variants.
 5. MCMC-BNN requires paired posterior files and has a parameter-filename mismatch; it is not part of the ordinary evaluation sweep.
+
+## Relocation decisions
+
+The audit distinguishes disconnected code from code that merely has a legacy or
+exploratory label. The following decisions preserve operational contracts:
+
+| Files | Decision | Rationale |
+|---|---|---|
+| `src/apply_patch_comparators.py`, `src/apply_patch_fib4.py` | Implementations archived in `misc/legacy/`; compatibility wrappers retained | Standalone, already-applied source migrations with no importer. Wrappers preserve documented invocations, arguments, and cwd behavior. |
+| `src/variance_test_datasets.py` | Implementation archived in `misc/exploratory/`; compatibility wrapper retained | Standalone ad-hoc analysis with no tracked consumer. Its relative data paths still resolve exactly as before when the wrapper is run from `src/`. |
+| `src/select_test_datasets.py` | Kept in place | It is imported by `preprocess.py`; this is a shared implementation, not a standalone dataset script. |
+| `src/models/mcmc_bnn.py` | Kept in place | It participates in dynamic model dispatch and the `mcmc_bnn` checkpoint naming contract. Moving it would risk training, evaluation, checkpoint, and external compatibility. |
+| `src/finetuning.py`, `src/make_umm_shap_figures.py` | Kept in place | Though legacy, both remain runnable experiment/report entry points tied to preprocessing, model artifacts, and established output paths. Moving them is cosmetic and adds compatibility risk. |
+| `src/stats.py`, `src/utils/descriptive_stats.py` | Kept in place | These exploratory reports import pipeline modules and consume established data/result paths; their current location is operationally meaningful. |
+| `src/utils/convert_amainz_dat.py` | Kept in place | This manual conversion entry point has import-time behavior and cwd-relative input/output paths. Relocation offers little benefit and risks the preprocessing-input workflow. |
+| `src/utils/smote.py`, `src/utils/utils.py` | Kept in place | They are disconnected library modules rather than standalone scripts. Keeping their import paths avoids uncertain external breakage. |
+
+The repository-wide follow-up search found no tracked importer of the three
+archived implementations. References to their original paths are intentional
+compatibility entry points or documentation.
