@@ -36,16 +36,16 @@ from src.train import hypertrain
 # ---------------------------------------------------------------------------
 # CONFIGURATION  (keep in sync with run_all_experiments.py)
 # ---------------------------------------------------------------------------
-TASKS = ['fibrosis', 'two_stage', 'cirrhosis', 'three_stage']
+TASKS = ['fibrosis', 'two_stage', 'cirrhosis'] # , 'three_stage']
 
 # Only the DL models need retraining. Add/remove as needed.
-TRAIN_MODELS = ['svm', 'rf', 'xgb', 'light_gbm', 'ffn', 'gandalf', 'tab_transformer', 'vi_bnn']
+TRAIN_MODELS = ['rf', 'xgb']  # ['svm', 'rf', 'xgb', 'light_gbm', 'ffn', 'gandalf', 'tab_transformer', 'vi_bnn']
 
 # Must equal the eval sweep. Original repo: only vi_bnn scales.
 SCALING_MODELS = {'vi_bnn'}
 
 # Must equal the eval sweep (run_all_experiments.py uses False).
-SHAP_SELECTED = False
+SHAP_SELECTED = True
 
 
 # ---------------------------------------------------------------------------

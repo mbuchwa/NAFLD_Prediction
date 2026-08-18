@@ -65,7 +65,7 @@ TASK_TITLE = {'fibrosis': ('Moderate Fibrosis', 'F0/1 vs.\\ F2/3/4'),
               'cirrhosis': ('Cirrhosis', 'F0/1/2/3 vs.\\ F4')}
 
 # One fixed set for every task and cohort, so rows stay comparable.
-MODELS = [('Random Forest', 'rf'), ('XGBoost', 'xgb'), ('LightGBM', 'light_gbm')]
+MODELS = [('Random Forest', 'rf'), ('XGBoost', 'xgb')]  # , ('LightGBM', 'light_gbm')]
 SCALED_MODELS = {'VI-BNN', 'MLP'}
 
 N_BOOT, SEED = 1000, 0

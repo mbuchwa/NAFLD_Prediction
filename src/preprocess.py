@@ -694,8 +694,8 @@ def preprocess(df, data_type='train', classification_type='fibrosis', scaling=Fa
             else:
                 shap_top_features = {
                     'fibrosis': ['Quick (%)', 'Thrombozyten (Mrd/l)', 'MCV (fl)'],
-                    'two_stage': ['Thrombozyten (Mrd/l)', 'Quick (%)', 'MCV (fl)'],
-                    'cirrhosis': ['Thrombozyten (Mrd/l)', 'Quick (%)', 'INR'],
+                    'two_stage': ['Thrombozyten (Mrd/l)', 'INR', 'MCV (fl)'],
+                    'cirrhosis': ['Thrombozyten (Mrd/l)', 'MCV (fl)', 'INR'],
                     'three_stage': ['Thrombozyten (Mrd/l)', 'Quick (%)', 'Albumin (g/l)'],
                 }
 
