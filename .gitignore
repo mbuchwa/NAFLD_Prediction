@@ -1,4 +1,5 @@
 /data/*
+!/data/README.md
 /src/results/*
 !/src/outputs
 /src/outputs/*
@@ -25,7 +26,6 @@
 /src/models/xgb_finetuned/*
 /src/models/xgb_shap_selected/*
 /src/models/xgb_shap_selected_finetuned/*
-
 
 
 
