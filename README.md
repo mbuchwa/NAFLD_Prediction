@@ -1,196 +1,141 @@
-[//]: # (<img src="misc/images/header.png" width="1100" height="140">)
+# Reproducing laboratory-based NAFLD fibrosis staging
 
-Dieser Code enthält ein Modell zur Bestimmung des Leberzustandes ("Liver-Staging") auf Basis der Blutbild-Biomarker der Patienten
-für 4 unterschiedliche Präkdiktions-Task.
+This repository contains the analysis code used to develop and externally evaluate machine-learning models for biopsy-defined liver-fibrosis staging from routine laboratory measurements. It supports reconstruction of preprocessing, model fitting, held-out and external validation, and manuscript tables and figures; it is research software, not a clinical diagnostic product.
 
-Bei Fragen, bitte eine Mail an [Marcus Buchwald](mailto:marcus.buchwald@medma.uni-heidelberg.de) oder an [Pascal Memmesheimer](mailto:pascal.memmemsheimer@medma.uni-heidelberg.de).
+## Scope and study overview
 
-# Table of contents
-1. [Daten](#Daten)
-2. [Modelldetails](#Modelldetails)
-3. [Prädiktion](#Prädiktion)
-4. [Inferenz](#Inferenz)
-5. [Output](#Output)
-6. [Pip-Installierung](#Pip-Installierung)
-7. [Docker-Installierung](#Docker-Installierung)
-8. [Scope](#Scope)
-9. [TO-DOs](#TO-DOs)
+The study uses retrospective University Medical Center Mannheim (**UMM**) data for development/internal evaluation and an independent Mainz (**MAINZ**) cohort for external evaluation. Liver-biopsy fibrosis stages define every outcome; routine laboratory variables are the predictors. The eight reported model families are SVM, random forest, XGBoost, LightGBM, multilayer perceptron (FFN), variational-inference Bayesian neural network (VI-BNN), GANDALF, and TabTransformer. Analyses comprise three binary tasks—moderate fibrosis (F0–1 vs F2–4), severe fibrosis (F0–2 vs F3–4), and cirrhosis (F0–3 vs F4)—and one three-stage task (F0–1, F2–3, F4).
 
---------------------- 
+The repository covers classification-oriented analyses only. It excludes deployment, clinical decision support, causal inference, and unreported endpoints. **No patient-level data are included in this repository or its Git history.**
 
-## Daten <a name="Daten"></a>
+## Repository structure
 
-Die Daten (`\data\`) sind retrospektive Klinikdaten der Uninversitätsmedizin Mannheim der Uni Heidelberg und enthalten Labordaten einer Blutentnahme sowie Histologiedaten im Bezug auf eine mögliche Fettleberekrankung.
-
-Die berücksichtigten Biomarker hierfür umfassen: 
-- Hb (g/dl) 
-- MCV (fl)
-- Leukozyten (Mrd/l)
-- Thrombozyten (Mrd/l)
-- Kalium
-- Albumin (g/l)
-- Bilrubin gesamt (mg/dl)
-- Harnstoff
-- Kreatinin (mg/dl)
-- GRF (berechnet) (ml/min)
-- ASAT (U/I)
-- ALAT (U/I)
-- GGT (U/I)
-- AP (U/I)
-- IgG (g/l)
-- Quick (%)
-- INR
-- PTT (sek)
-- HbA1c (%)
-- Glucose in plasma (mg/dL)
-- LDL- Cholesterin (mg/dL)
-
---------------------- 
-
-
-## Details zum Modell / Training <a name="Modelldetails"></a>
-
-### Modell
-
-Verwendet wird ein Bayesian Neural Network (BNN) um die Klassifikation auf Basis der angegebenen Symptome zu berechnen.
-Trainiert und analysiert wurden eine Vielzahl an tree-based und deep-learning Modellen von (Credits: Pascal Memmesheimer) für das Projekt. Die analysierten 
-Modelle sind:
-
-- SVM
-- RF
-- XGB Boost
-- Light GBM
-
-- Multi Layer Perceptron
-- BNN (variational inference)
-- GANDALF
-- Tab Transformer 
-
----------------------
-
-## Prädiktion <a name="Prädiktion"></a>
-
-Das Modelle geben eine binäre Prädiktion gibt Wahrscheinlichkeiten der einzelnen Stages auf Basis der Biomarker an. 
-
-<img src="src/outputs/light_gbm/cirrhosis_beeswarm.png" width="500" height="600">
-<img src="src/outputs/light_gbm/cirrhosis_summary_bar.png" width="500" height="350">
-
-<img src="src/outputs/light_gbm/fibrosis_beeswarm.png" width="500" height="600">
-<img src="src/outputs/light_gbm/fibrosis_summary_bar.png" width="500" height="350">
-
-
-
----------------------
-
-## Inferenz / Verwendung des trainierten Modells <a name="Inferenz"></a>
-
-Die Daten zum Testen des Modells sollen für Biomarkerwerte von Patienten mit einer `sub_id` in folgendem Format als `inference.csv` in `/src/data/` abgelegt werden.
-
-Die Inferenz wird via Docker aufgerufen. Alternativ kann `\scr\inference.py` aufgerufen werden.
-
-
----------------------
-
-## Output <a name="Output"></a>
-
-Eine CSV wird erstellt in `\scr\output\result_inference.csv` welche die mit folgender Struktur:
-
-
---------------------- 
-
-## Installierung via Pip <a name="Pip-Installierung"></a>
-
-Für eine schnelle Installation:
-
-Installiere Pytorch via: 
-
-```
-pip install torch==2.0.1 torchvision==0.15.2 torchaudio==2.0.2 --index-url https://download.pytorch.org/whl/cu118``
-```
-Um alle anderen Packages zu installieren, wird folgender Code im Terminal ausgeführt nachdem eine neue Conda environment angelegt wurde.
-
-```
-pip install -r requirements.txt
-```
---------------------- 
-
-## Installierung als Docker <a name="Docker-Installierung"></a>
-
-Erstellung des Docker Image via `Dockerfile`. Die `Dockerfile` muss mit Docker ausgeführt werden.
-
-### Container auf GPU ausführen 
-
-Um den Container auf der GPU auszuführen, muss  `nvidia-container-toolkit` auf dem Host installiert werden.
-Die Dockerfile wird daraufhin via `sudo docker compose up` auf Basis der `compose.yml` file ausgeführt.
-
-Zum Ausführen des Containers:
-
-```
-sudo docker compose up
+```text
+data/                 controlled raw inputs and generated local datasets (ignored)
+src/                  preprocessing, models, training, evaluation, and reporting code
+src/models/           canonical trained-checkpoint location
+src/outputs/          primary results, tables, figures, QC, and clinical-utility outputs
+outputs/               repository-root reporting and selected sensitivity/QC outputs
+misc/                  exploratory, diagnostic, and legacy material (not primary workflow)
+environment.yml       canonical Conda environment
 ```
 
-#### Anleitung zum Installieren von "nvidia-container-toolkit"
+See `data/README.md` for the exact data contract and `PATH_CONTRACT_INVENTORY.md` before moving any artifact.
 
-Für das Installieren von `nvidia-container-toolkit` bitte folgende Befehle im Terminal ausführen.
-```
-curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg \
-  && curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list | \
-    sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' | \
-    sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
-```
+## Installation
 
-```
-sudo sed -i -e '/experimental/ s/^#//g' /etc/apt/sources.list.d/nvidia-container-toolkit.list
+Run from the repository root. Prerequisites are Conda (or Mamba), a Linux-compatible environment, and, for the pinned GPU stack, a compatible NVIDIA driver/CUDA runtime.
+
+```bash
+conda env create -f environment.yml
+conda activate nafl
 ```
 
+The first command creates the canonical `nafl` environment; the second activates it. `requirements.txt` is retained for compatibility but is not the canonical reproducibility installation.
+
+## Controlled data placement
+
+Access is controlled; consult the manuscript and associated heiDATA record for availability and the request procedure. Authorized researchers must place the three workbooks named in `data/README.md` directly under `data/`. Prerequisites are approved access and the exact original filenames; the main outputs are ignored cleaned tables in `data/preprocessed_no_mice_<split>/` and ten imputed datasets in `data/preprocessed_mice_fib_<split>/`. Never force-add raw or derived patient data to Git.
+
+## Primary workflow (ordered)
+
+Run legacy analysis entry points from `src/` so their relative `models/`, `outputs/`, and `../data/` paths resolve correctly. Configuration is currently by constants in each script, not command-line arguments.
+
+1. **Configure and train one model/task.** In `train.py`, set `model_name`, `classification_type`, and `shap_selected`; preserve the scaling policy described below.
+
+   ```bash
+   cd src
+   python train.py
+   ```
+
+   Prerequisites: active `nafl` environment, controlled workbooks in `data/`, and a reviewed configuration. There is no separate canonical preprocessing command: `train.py` calls `prepare_data(...)`, which performs preprocessing/imputation before training. Main outputs are generated datasets under `data/`, data-QC artifacts, checkpoints under `src/models/<model>/`, and training artifacts under `src/outputs/<model>/`.
+
+2. **Evaluate the matching checkpoint once.** Set the same task, model, feature-selection, and scaling choices in `test.py`; retain `select_patients=False` and `smote=False` for external evaluation.
+
+   ```bash
+   python test.py
+   ```
+
+   Prerequisites: matching checkpoints and generated data. Main outputs are held-out UMM and external MAINZ metrics/plots under `src/outputs/<model>/` (including `prospective/`) and external prevalence under `src/outputs/external/`. Evaluation preprocessing is combined in this entry point through `prepare_data(...)`.
+
+3. **Recompute checkpoint-based manuscript tables.** Run each command only after all checkpoints required by that script exist.
+
+   ```bash
+   python recompute_tables.py
+   python recompute_three_stage.py
+   python recompute_reduced_tables.py
+   ```
+
+   The commands respectively produce binary tables (`src/outputs/tables/tables_recomputed.{csv,tex}`), the ordinal table (`table3_three_stage_recomputed.{csv,tex}`), and reduced-feature results (`table5_reduced_recomputed.{csv,tex}`). The reduced command additionally requires `src/outputs/shap_top_features.json` and matching `*_shap_selected` checkpoints.
+
+4. **Generate publication figures and clinical-utility reporting.** These scripts consume generated datasets and compatible checkpoints directly; they do not consume the recomputed table CSVs.
+
+   ```bash
+   python make_publication_figures.py
+   python shap_publication_figures.py
+   python clinical_utility_from_checkpoints.py
+   python check_table_figure_consistency.py
+   ```
+
+   Prerequisites: complete checkpoint/data contracts (and SHAP dependencies for SHAP output). Main outputs are publication PNG/PDF/CSV files in `src/outputs/figures/`, calibration metrics/plots and decision curves in `src/outputs/clinical_utility/`, and consistency results in `src/outputs/robustness/`. Missing checkpoints may be skipped by some reporting scripts; inspect warnings and outputs before reporting results.
+
+5. **Optionally aggregate legacy JSON metrics.** This is distinct from checkpoint-recomputed tables.
+
+   ```bash
+   python aggregate_results.py
+   ```
+
+   Prerequisites: evaluation `*_metrics.json` files under `src/outputs/`. Main outputs are `src/outputs/results/all_metrics_long.csv` and `manuscript_tables.xlsx`.
+
+## Simplified wrappers
+
+The wrappers reduce repeated manual calls but remain configuration-driven:
+
+```bash
+cd src
+PYTHONPATH=.. python run_all_train_experiments.py
+PYTHONPATH=.. python run_all_tests.py
 ```
-sudo chmod 0644 /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
-```
 
-```
-sudo apt update
-```
+The explicit `PYTHONPATH` makes the repository-level `src` package importable while preserving the required working directory. Before either command, inspect and synchronize `TASKS`, model lists, `SCALING_MODELS`, and `SHAP_SELECTED`; ensure raw data are available, and ensure evaluation checkpoints exist. The training wrapper writes checkpoints plus a failure log in `src/outputs/results/`; the testing wrapper writes per-model metrics, prevalence files, QC snapshots, and a timestamped results/failure-log directory.
 
-```
-sudo apt-get install -y nvidia-container-toolkit
-```
+**Important:** the checked-in `run_all_train_experiments.py` is a reduced-feature RF/XGBoost configuration, whereas `run_all_tests.py` currently selects a broader model set with a different scaling configuration. Therefore, the training wrapper **does not currently train all eight reported models** and the two wrappers must not be run as though they were a matched full-study pipeline. Use the documented historical settings in `RETRAINING_PLAYBOOK.md`, make temporary reviewed edits, record the diff, and restore it afterward.
 
-```
-sudo nvidia-ctk runtime configure --runtime=docker
-```
+## Auxiliary, sensitivity, and QC analyses
 
-Überprüfung ob `nvidia-smi` angezeigt wird via Docker wenn das Docker Image `ubuntu` ausgeführt wird.
-```
-sudo docker run --rm --runtime=nvidia --gpus all ubuntu nvidia-smi
-```
+These are separate from the ordered primary workflow and should not replace it.
 
-Starte den "deamon" und "docker" neu:
-```
-sudo systemctl daemon-reload
-```
+| Command (run from `src/`) | Prerequisites | Main outputs |
+|---|---|---|
+| `python lab_window_robustness.py` | Controlled raw data and active environment | `src/outputs/robustness/lab_window_auroc_comparison.csv` and window checkpoints/artifacts |
+| `python print_recommended_lab_window.py` | Completed lab-window sweep | Printed recommendation based on robustness output |
+| `python run_missingness_sensitivity_all.py` | Controlled data and compatible checkpoints/dependencies | Repository-root `outputs/robustness/` sensitivity results |
+| `python check_split_stratification.py` | Controlled raw/generated data | Split-balance QC reported by the script |
+| `python test_training_determinism.py` | Full training dependencies | Determinism check output/failures in the terminal |
+| `python paired_model_comparison.py` | Binary checkpoints and imputed evaluation data | `src/outputs/tables/paired_model_comparison.{csv,tex}` |
+| `python ordinal_decision_rules.py` | Three-stage checkpoints and imputed data | `src/outputs/tables/ordinal_decision_rules.{csv,tex}` |
 
-```
-sudo systemctl restart docker
-```
+`misc/` contains exploratory, diagnostic, and legacy scripts and is not an alternative primary pipeline.
 
+## Fixed reproducibility choices
 
---------------------- 
+- The prespecified standard laboratory window is 7 days before biopsy and 0 days after; the nearest eligible pre-biopsy measurement is used.
+- Multiple imputation uses ten MICE/`IterativeImputer` datasets with posterior sampling and `random_state=0,...,9`; ensemble member *i* must remain paired with imputation *i*.
+- UMM supplies train/validation/held-out test partitions; MAINZ remains the external (`prospective`) cohort. Do not apply SMOTE or patient selection to held-out/external evaluation.
+- Full-study scaling is enabled only for VI-BNN and must match between training and evaluation. Feature selection must likewise match its checkpoint.
+- Canonical table and ROC/SHAP routines use 1,000 patient-level bootstrap resamples and fixed seeds defined in their scripts (generally seed 0); clinical-utility calibration uses 1,000 resamples with seed 42.
+- Preserve task IDs, model storage IDs (notably `light_gbm`), split names, filenames, and working-directory conventions in `PATH_CONTRACT_INVENTORY.md`.
 
-## Scope <a name="Scope"></a>
+## Reporting and artifact locations
 
-Dieses Repository unterstützt die im Manuskript beschriebenen, klassifikationsorientierten NAFLD-Liver-Staging-Analysen auf Basis klinischer Laborparameter. Der Codeumfang umfasst:
-- Datenvorverarbeitung für retrospektive und prospektive Kohorten, einschließlich Cleaning, Missing-Data-Handling, MICE-Imputation, optionaler Skalierung/Encoding und dokumentierter Outlier-Policy.
-- Training, Hyperparameter-Suche und Evaluation für die hier implementierten Modellklassen (SVM, RF, XGBoost, LightGBM, MLP/FFN, VI-BNN, MCMC-BNN, GANDALF und TabTransformer).
-- Modellinterpretation und Evaluation für diese Klassifikationsaufgaben, soweit durch die vorhandenen Trainings- und Validierungsroutinen abgedeckt.
-- Reproduzierbare Reporting-Artefakte unter `outputs/reporting/`, die mit `python outputs/reporting/generate_reporting_summaries.py` erzeugt werden können:
-  - `preprocessing_summary.csv` dokumentiert die sequenzielle Vorverarbeitung (Cleaning, Missing-Data-Handling, Imputation, Scaling/Encoding und Outlier-Policy).
-  - `hyperparameter_search_summary.csv` dokumentiert pro Modell die getunten Parameter, Suchräume, Suchstrategie, Optimierungsmetrik und Trial-Anzahl.
+Checkpoints are discovered under `src/models/<model>/`; `src/checkpoints/`, `src/saved_model/`, and `src/saved_models/` are not active fallbacks. Evaluation results are under `src/outputs/<model>/`, aggregate results under `src/outputs/results/`, recomputed tables under `src/outputs/tables/`, figures under `src/outputs/figures/`, and calibration/decision-curve artifacts under `src/outputs/clinical_utility/`. Some file-relative sensitivity and QC scripts intentionally write to repository-root `outputs/data_qc/` or `outputs/robustness/`.
 
-Nicht Teil dieses Repository-Scopes sind zusätzliche klinische Endpunkte, kausale Analysen, prospektive Deployment-/Monitoring-Infrastruktur oder nicht dokumentierte Manuskript-Claims außerhalb dieser Pipeline.
+Report the work in accordance with **TRIPOD+AI**: identify development and external cohorts, biopsy-defined outcomes, predictor handling, missing-data procedures, model specification/tuning, and all analysis populations. Report discrimination with point estimates and 95% patient-level bootstrap confidence intervals, not point estimates alone. Include calibration plots plus Brier score, calibration intercept, and calibration slope, and report decision-curve net benefit across clinically relevant thresholds. Preserve both UMM and MAINZ results and disclose any skipped or incompatible checkpoint.
 
---------------------- 
+## Citation
 
-## TO-DOs <a name="TO-Dos"></a>
+Bibliographic details are not yet available. Please cite the accompanying manuscript (authors, title, journal/preprint, year, and DOI to be added when available) and the repository version or commit hash used for reproduction.
 
+## License
 
-
+No repository license has yet been supplied. Consequently, no permission terms should be inferred; contact the repository maintainers before reuse or redistribution.
