@@ -1,4 +1,7 @@
 """
+shap_publication_figures_v1.py
+==============================
+HISTORICAL PREDECESSOR — use src/shap_publication_figures.py for final manuscript artifacts.
 SHAP analyses plus ROC/confusion-matrix panels in journal-ready quality.
 Figures 3--6 use the per-cohort AUROC winners from Tables 1--3; Table 4 and
 Figures 7--10 use a separate, fixed set of attribution models in both cohorts.
@@ -6,18 +9,10 @@ Figures 7--10 use a separate, fixed set of attribution models in both cohorts.
 Renamed from make_publication_figures.py: a second script of that name handles
 the cohort/PCA/ROC figures, and one would silently overwrite the other in src/.
 
-Place in:  src/            Run from:  src/  ->  python -m shap_publication_figures_v3
+Place in:  src/            Run from:  src/  ->  python shap_publication_figures.py
 
 WHAT CHANGED AGAINST THE PREVIOUS VERSION
 -----------------------------------------
-0. TABLE-CONSISTENT EVALUATION PATH FOR FIGURES 3--6.
-   AUROC and operating-point metrics now mirror validation_tools.evaluate_performance:
-   all m ensemble members are soft-voted on the FIRST imputed evaluation matrix
-   (ensemble_pred_probas[0]), probabilities are row-renormalised, and the exact
-   unique-score Youden search / tie handling from validation_tools.py is used.
-   This replaces the previous model-i / imputation-i averaging, which was not the
-   path used to generate Tables 1--3.
-
 1. MULTICLASS FIX (affects the three-stage results in the manuscript).
    The old code passed `positive_class=1` for every task. For three_stage,
    TreeExplainer returns (n_samples, n_features, 3) and `sv[:, :, 1]` keeps
@@ -100,27 +95,12 @@ TASK_LABEL = {'fibrosis': 'Moderate fibrosis', 'two_stage': 'Severe fibrosis',
 
 # Models for which SHAP is computed. Keep this restricted to models for which the
 # current SHAP pipeline is established and reproducible.
-SHAP_MODELS = ['light_gbm']
+SHAP_MODELS = ['light_gbm', 'xgb', 'rf', 'svm']
 
 # Models that may be selected for ROC/confusion-matrix figures. These correspond
 # to the model families reported in Tables 1--3.
 EVAL_MODELS = ['svm', 'rf', 'xgb', 'light_gbm', 'ffn',
                'tab_transformer', 'vi_bnn', 'gandalf']
-
-# Storage/inference families used by the trained checkpoints.
-PICKLE_MODELS = {'svm', 'rf', 'xgb', 'light_gbm'}
-PYTORCH_MODELS = {'ffn', 'tab_transformer', 'vi_bnn'}
-
-# Keep this in sync with the training/evaluation pipeline that produced Tables 1--3.
-# In the current manuscript run VI-BNN used scaled inputs; the other selected models
-# used the ordinary (unscaled) preprocessing.
-SCALING_MODELS = {'vi_bnn'}
-
-# The laboratory-window sweep moved the normal LightGBM two-stage pickle out of
-# models/light_gbm/. The prespecified manuscript model is the pre7_post0 model.
-PRIMARY_LIGHTGBM_FALLBACK = {
-    'two_stage': Path('models/light_gbm_window/pre7_post0/model_two_stage.pickle'),
-}
 
 MODEL_LABEL = {
     'svm': 'SVM',
@@ -177,7 +157,7 @@ BEST_EVAL_MODEL_PER_TASK = {
 SHAP_MODEL_PER_TASK = {
     'fibrosis': 'light_gbm',
     'two_stage': 'light_gbm',
-    'cirrhosis': 'light_gbm',
+    'cirrhosis': 'rf',
     'three_stage': 'light_gbm',
 }
 
@@ -476,275 +456,58 @@ def confusion_plot(cm, classes, title, stem):
     save(fig, stem)
 
 
-def _tree_checkpoint_path(model, task):
-    """Return the manuscript checkpoint for a pickle-based model.
-
-    The window-sensitivity script historically moved the primary LightGBM
-    two-stage pickle. If the normal path is absent, use only the prespecified
-    seven-day pre-biopsy checkpoint -- never a data-selected alternative window.
-    """
-    path = Path(f'models/{model}/model_{task}.pickle')
-    if path.exists():
-        return path
-    fallback = PRIMARY_LIGHTGBM_FALLBACK.get(task) if model == 'light_gbm' else None
-    if fallback is not None and fallback.exists():
-        print(f'  !! {path} missing; using prespecified 7-day checkpoint: {fallback}')
-        return fallback
-    return path
-
-
-def _checkpoint_sort_key(path):
-    """Sort model_*_0.pth ... model_*_9.pth numerically."""
-    try:
-        return int(Path(path).stem.rsplit('_', 1)[1])
-    except Exception:
-        return str(path)
-
-
-def _load_eval_ensemble(model, task, df_cols):
-    """Load one trained ensemble using the repository's native checkpoint format.
-
-    Important: VI-BNN cannot be loaded through ``validation_tools.load_pytorch_model``
-    because that generic helper currently instantiates only FFN and TabTransformer.
-    For VI-BNN we therefore reproduce the native loader from
-    ``models/vi_bnn.py::evaluate_ensemble_vi_bnn`` exactly, including
-    ``prior_var=1.0`` and the repository's ``get_device(i=0)`` selection.
-    """
-    if model in PICKLE_MODELS:
-        path = _tree_checkpoint_path(model, task)
-        if not path.exists():
-            raise FileNotFoundError(path)
-        with open(path, 'rb') as fh:
-            models = pickle.load(fh)
-        return models
-
-    if model in PYTORCH_MODELS:
-        model_dir = Path(f'models/{model}')
-        checkpoints = sorted(
-            [p for p in model_dir.glob(f'model_{task}_*.pth')],
-            key=_checkpoint_sort_key,
-        )
-        if not checkpoints:
-            raise FileNotFoundError(
-                f'No PyTorch checkpoints found for {model}/{task} in {model_dir}'
-            )
-
-        # VI-BNN has its own repository-native reconstruction logic.
-        if model == 'vi_bnn':
-            import torch
-            try:
-                from src.utils.networks import VI_BNN
-                from src.utils.helper_functions import get_device
-            except ImportError:
-                from utils.networks import VI_BNN
-                from utils.helper_functions import get_device
-
-            device = get_device(i=0)
-            models = []
-            for ckpt in checkpoints:
-                model_index = ckpt.stem.rsplit('_', 1)[-1]
-                param_path = model_dir / f'model_params_{task}_{model_index}.txt'
-                if not param_path.exists():
-                    raise FileNotFoundError(
-                        f'Missing VI-BNN parameter file for {ckpt.name}: {param_path}'
-                    )
-
-                # Parameter files were written as Python reprs and may contain
-                # np.float64 / np.int64 values, so this intentionally mirrors the
-                # original VI-BNN evaluator's eval-based loader.
-                param_dict = eval(param_path.read_text().strip(), {'np': np})
-                mdl = VI_BNN(**param_dict, prior_var=1.0).to(device)
-                state = torch.load(ckpt, map_location=device)
-                mdl.load_state_dict(state)
-                mdl.eval()
-                models.append(mdl)
-            return models
-
-        # FFN and TabTransformer are supported by the generic repository helper.
-        try:
-            from src.utils.validation_tools import load_pytorch_model
-        except ImportError:
-            from utils.validation_tools import load_pytorch_model
-
-        models = []
-        for ckpt in checkpoints:
-            mdl = load_pytorch_model(ckpt.name, task, model, df_cols=df_cols)
-            if hasattr(mdl, 'eval'):
-                mdl.eval()
-            models.append(mdl)
-        return models
-
-    raise NotImplementedError(
-        f'No figure-time loader configured for model={model!r}. '
-        'Add its native repository loader before selecting it for Figures 3--6.'
-    )
-
-
-def _torch_output_tensor(out):
-    """Extract the logits/probability tensor from common Lightning outputs."""
-    import torch
-    if torch.is_tensor(out):
-        return out
-    if isinstance(out, dict):
-        for key in ('logits', 'y_hat', 'pred', 'prediction', 'predictions', 'output'):
-            if key in out and torch.is_tensor(out[key]):
-                return out[key]
-        for val in out.values():
-            if torch.is_tensor(val):
-                return val
-    if isinstance(out, (tuple, list)):
-        for val in out:
-            if torch.is_tensor(val):
-                return val
-    raise TypeError(f'Cannot extract prediction tensor from output type {type(out).__name__}')
-
-
 def _predict_proba(model, x):
-    """Return an ``(n_samples, n_classes)`` probability matrix.
+    """Return a NumPy probability matrix for one fitted model.
 
-    Classical models use ``predict_proba``. PyTorch/Lightning models are loaded
-    with the repository's ``load_pytorch_model`` helper and evaluated by a direct
-    forward pass; logits are converted with sigmoid/softmax.
+    All model wrappers used in the manuscript evaluation are expected to expose
+    ``predict_proba``. Failing loudly here is preferable to silently treating hard
+    class predictions as probabilities.
     """
-    x = np.asarray(x)
-
-    if hasattr(model, 'predict_proba'):
-        p = np.asarray(model.predict_proba(x))
-    else:
-        import torch
-        if not isinstance(model, torch.nn.Module):
-            raise AttributeError(
-                f'{type(model).__name__} has neither predict_proba nor a torch.nn.Module interface'
-            )
-        try:
-            device = next(model.parameters()).device
-        except StopIteration:
-            device = torch.device('cpu')
-        xt = torch.as_tensor(x, dtype=torch.float32, device=device)
-        model.eval()
-        with torch.no_grad():
-            out = _torch_output_tensor(model(xt))
-        arr = out.detach().cpu().numpy()
-
-        if arr.ndim == 1:
-            q = 1.0 / (1.0 + np.exp(-arr))
-            p = np.column_stack([1.0 - q, q])
-        elif arr.ndim == 2 and arr.shape[1] == 1:
-            q = 1.0 / (1.0 + np.exp(-arr[:, 0]))
-            p = np.column_stack([1.0 - q, q])
-        elif arr.ndim == 2:
-            # Some wrappers return probabilities already, others return logits
-            # (or log-probabilities). Preserve valid probabilities; otherwise softmax.
-            rowsum = arr.sum(axis=1)
-            is_prob = (np.all(np.isfinite(arr)) and np.all(arr >= -1e-7) and
-                       np.all(arr <= 1.0 + 1e-7) and
-                       np.allclose(rowsum, 1.0, atol=1e-4, rtol=1e-4))
-            if is_prob:
-                p = arr
-            else:
-                z = arr - np.max(arr, axis=1, keepdims=True)
-                ez = np.exp(z)
-                p = ez / ez.sum(axis=1, keepdims=True)
-        else:
-            raise ValueError(
-                f'PyTorch model returned shape {arr.shape}; expected (n,), (n,1), or (n,C)'
-            )
-
-    p = np.asarray(p, dtype=float)
+    if not hasattr(model, 'predict_proba'):
+        raise AttributeError(
+            f'{type(model).__name__} has no predict_proba(); '
+            'use the same inference wrapper as the manuscript evaluation pipeline.'
+        )
+    p = np.asarray(model.predict_proba(np.asarray(x)))
     if p.ndim == 1:
         p = np.column_stack([1.0 - p, p])
     if p.ndim != 2:
-        raise ValueError(f'Probability output has shape {p.shape}, expected (n, classes)')
+        raise ValueError(f'predict_proba returned shape {p.shape}, expected (n, classes)')
     return p
 
 
 def _ensemble_proba(models, xs):
-    """Reproduce the probability aggregation used by validation_tools.evaluate_performance.
+    """Soft-vote ensemble probability, member i evaluated on imputation i.
 
-    IMPORTANT
-    ---------
-    The manuscript tables do *not* evaluate ensemble member i on imputation i
-    for the reported AUROC/operating-point metrics.  The repository's native
-    make_ensemble_preds* functions loop over imputations and, for each
-    imputation, evaluate *all* m ensemble members on that same matrix.
-    evaluate_performance then uses ensemble_pred_probas[0] as the reference
-    probability matrix for AUROC and validation-fixed operating-point metrics.
-
-    Figures 3--6 therefore use the first imputed matrix and soft-vote all
-    ensemble members on that matrix, matching the table-generation path.
+    This mirrors the ensemble definition used throughout the manuscript: each
+    ensemble member is applied to the matching imputed dataset and the resulting
+    class probabilities are averaged patient-wise.
     """
     xs = xs if isinstance(xs, (list, tuple)) else [xs]
-    if len(xs) == 0:
-        raise ValueError('No imputed matrices supplied for ensemble inference')
-
-    x = np.asarray(xs[0])
-    probas = [_predict_proba(mdl, x) for mdl in models]
+    probas = []
+    for i, mdl in enumerate(models):
+        x = np.asarray(xs[i] if i < len(xs) else xs[0])
+        probas.append(_predict_proba(mdl, x))
     shapes = {p.shape for p in probas}
     if len(shapes) != 1:
         raise ValueError(f'Ensemble members returned incompatible probability shapes: {shapes}')
-
-    p = np.mean(probas, axis=0)
-
-    # evaluate_performance explicitly renormalises the soft-voted probabilities
-    # before AUROC / threshold evaluation. Mirror that step exactly.
-    row_sums = p.sum(axis=1, keepdims=True)
-    if np.any(row_sums <= 0):
-        raise ValueError(
-            f'{int((row_sums <= 0).sum())} rows have a non-positive probability sum'
-        )
-    row_sums[row_sums == 0] = 1.0
-    return p / row_sums
-
-
-def _calc_binary_operating_metrics(y_true, positive_scores, threshold):
-    """Minimal copy of validation_tools._calc_binary_operating_metrics."""
-    y_true = np.asarray(y_true).astype(int).ravel()
-    scores = np.asarray(positive_scores, dtype=float).ravel()
-    pred = (scores >= float(threshold)).astype(int)
-
-    tn = int(np.sum((y_true == 0) & (pred == 0)))
-    fp = int(np.sum((y_true == 0) & (pred == 1)))
-    fn = int(np.sum((y_true == 1) & (pred == 0)))
-    tp = int(np.sum((y_true == 1) & (pred == 1)))
-
-    sensitivity = tp / (tp + fn) if (tp + fn) else np.nan
-    specificity = tn / (tn + fp) if (tn + fp) else np.nan
-    ppv = tp / (tp + fp) if (tp + fp) else np.nan
-    npv = tn / (tn + fn) if (tn + fn) else np.nan
-
-    return {
-        'Sensitivity': float(sensitivity),
-        'Specificity': float(specificity),
-        'PPV': float(ppv),
-        'NPV': float(npv),
-    }
+    return np.mean(probas, axis=0)
 
 
 def _youden_threshold(y, score):
-    """Exact Youden implementation used by validation_tools.py.
-
-    The repository searches the unique validation scores in ascending order
-    and updates the selected threshold only for a *strictly* better Youden
-    index.  This tie handling can differ from sklearn.metrics.roc_curve and is
-    needed for Figures 5--6 to reproduce Tables 1--2.
-    """
+    """Youden threshold determined on the UMM validation partition only."""
+    from sklearn.metrics import roc_curve
     y = np.asarray(y).astype(int).ravel()
-    score = np.asarray(score).astype(float).ravel()
-    thresholds = np.unique(score)
-    if thresholds.size == 0:
-        return 0.5
-
-    best_thr = 0.5
-    best_youden = -np.inf
-    for thr in thresholds:
-        metrics = _calc_binary_operating_metrics(y, score, thr)
-        if np.isnan(metrics['Sensitivity']) or np.isnan(metrics['Specificity']):
-            continue
-        youden = metrics['Sensitivity'] + metrics['Specificity'] - 1.0
-        if youden > best_youden:
-            best_youden = youden
-            best_thr = float(thr)
-    return best_thr
+    score = np.asarray(score).ravel()
+    fpr, tpr, thresholds = roc_curve(y, score)
+    j = tpr - fpr
+    finite = np.isfinite(thresholds)
+    if finite.any():
+        idxs = np.flatnonzero(finite)
+        best = idxs[np.argmax(j[finite])]
+    else:
+        best = int(np.argmax(j))
+    return float(thresholds[best])
 
 
 def _binary_roc_with_ci(y, score, n_boot=N_BOOT, seed=SEED):
@@ -1005,77 +768,54 @@ def main():
     shap_bars = {c: {} for c in COHORTS}
     shap_swarms = {c: {} for c in COHORTS}
 
-    prep_cache = {}
-
-    def get_prepared(task, scaling):
-        key = (task, bool(scaling))
-        if key not in prep_cache:
-            prep_cache[key] = prepare_data(task, False, bool(scaling))
-        return prep_cache[key]
-
     for task in TASKS:
         print(f'\n=== {task} ===')
-
-        # Unscaled data are the basis for the classical-model SHAP analysis.
         (xs_train, ys_train, xs_val, ys_val, xs_test, ys_test,
-         xs_pro, ys_pro, df_cols_de) = get_prepared(task, False)
+         xs_pro, ys_pro, df_cols_de) = prepare_data(task, False, False)
         feats = [dict_germ_eng.get(c, c) for c in df_cols_de]
         n_cls = 3 if task == 'three_stage' else 2
         classes = ['F0-1', 'F2-3', 'F4'] if n_cls == 3 else ['Negative', 'Positive']
 
-        y_umm_base = np.asarray(ys_test[0]).ravel()
-        y_mainz_base = np.asarray(ys_pro[0]).ravel()
-        data = {'UMM': (np.asarray(xs_test[0]), y_umm_base),
-                'MAINZ': (np.asarray(xs_pro[0]), y_mainz_base)}
+        y_val = np.asarray(ys_val[0]).ravel()
+        y_umm = np.asarray(ys_test[0]).ravel()
+        y_mainz = np.asarray(ys_pro[0]).ravel()
+        data = {'UMM': (np.asarray(xs_test[0]), y_umm),
+                'MAINZ': (np.asarray(xs_pro[0]), y_mainz)}
+        imputations = {'VAL': xs_val, 'UMM': xs_test, 'MAINZ': xs_pro}
 
         global N_UMM, N_MAINZ
-        N_UMM, N_MAINZ = len(y_umm_base), len(y_mainz_base)
+        N_UMM, N_MAINZ = len(y_umm), len(y_mainz)
 
         # ---------------------------------------------------- Figures 3--6 ---
-        # Load each selected model with the exact preprocessing policy it used at
-        # training/evaluation time. Do not silently skip missing winners: a partial
-        # panel is more dangerous than a hard failure in a manuscript pipeline.
         selected_keys = set(BEST_EVAL_MODEL_PER_TASK[c][task] for c in COHORTS)
         eval_cache = {}
-        eval_data = {}
         threshold_cache = {}
 
         for model in selected_keys:
             if model not in EVAL_MODELS:
                 raise ValueError(f'{model} is selected for evaluation but absent from EVAL_MODELS')
-
-            scaling = model in SCALING_MODELS
-            (m_xs_train, m_ys_train, m_xs_val, m_ys_val, m_xs_test, m_ys_test,
-             m_xs_pro, m_ys_pro, m_df_cols) = get_prepared(task, scaling)
-
-            try:
-                models = _load_eval_ensemble(model, task, m_df_cols)
-            except Exception as exc:
-                raise RuntimeError(
-                    f'Failed to load selected model {model}/{task}. '
-                    'Figures 3--6 would otherwise be incomplete.'
-                ) from exc
-
-            eval_cache[model] = models
-            eval_data[model] = {
-                'VAL': (m_xs_val, np.asarray(m_ys_val[0]).ravel()),
-                'UMM': (m_xs_test, np.asarray(m_ys_test[0]).ravel()),
-                'MAINZ': (m_xs_pro, np.asarray(m_ys_pro[0]).ravel()),
-            }
-            print(f'  eval {model}: {len(models)} ensemble members | scaling={scaling}')
+            path = Path(f'models/{model}/model_{task}.pickle')
+            if not path.exists():
+                print(f'  !! selected evaluation model missing: {path}')
+                continue
+            with open(path, 'rb') as fh:
+                eval_cache[model] = pickle.load(fh)
+            print(f'  eval {model}: {len(eval_cache[model])} ensemble members')
 
             if n_cls == 2:
-                val_xs, val_y = eval_data[model]['VAL']
-                p_val = _ensemble_proba(models, val_xs)[:, 1]
-                threshold_cache[model] = _youden_threshold(val_y, p_val)
+                p_val = _ensemble_proba(eval_cache[model], imputations['VAL'])[:, 1]
+                threshold_cache[model] = _youden_threshold(y_val, p_val)
                 print(f'    validation Youden threshold = {threshold_cache[model]:.6f}')
 
         for cohort in COHORTS:
             model = BEST_EVAL_MODEL_PER_TASK[cohort][task]
+            if model not in eval_cache:
+                print(f'  {cohort}/{task}: selected model {model} unavailable; panel cell skipped')
+                continue
             models = eval_cache[model]
             lbl = MODEL_LABEL[model]
-            cohort_xs, y = eval_data[model][cohort]
-            proba = _ensemble_proba(models, cohort_xs)
+            y = data[cohort][1]
+            proba = _ensemble_proba(models, imputations[cohort])
 
             if n_cls == 2:
                 threshold = threshold_cache[model]
@@ -1096,7 +836,7 @@ def main():
 
         # ------------------------------------------------- Table 4 / SHAP ---
         for model in SHAP_MODELS:
-            path = _tree_checkpoint_path(model, task)
+            path = Path(f'models/{model}/model_{task}.pickle')
             if not path.exists():
                 print(f'  SHAP {model}: no checkpoint - skipped')
                 continue

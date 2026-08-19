@@ -1,12 +1,13 @@
 """
 derive_shap_top_features.py
 ===========================
+HISTORICAL HELPER — not the final manuscript feature-selection procedure.
 Reads the SHAP values produced by the full-biomarker run and writes the top-3
 biomarkers per task to a JSON file, so the reduced-feature run does not depend
 on a hand-edited dict inside preprocess.py.
 
 Run from:  src/   ->   python -m src.derive_shap_top_features
-Input:     outputs/figures/shap_all_features.csv   (written by shap_publication_figures.py)
+Input:     outputs/figures/shap_all_features.csv   (historically written by an earlier publication variant)
 Output:    outputs/shap_top_features.json
 
 WHY A FILE AND NOT AN EDIT
@@ -39,7 +40,8 @@ TOP_N = 3
 COHORT = 'UMM'          # rank on the development cohort, not the external one
 
 # Model whose ranking defines the reduced set, per task. Keep in sync with
-# BEST_MODEL_PER_TASK in shap_publication_figures.py.
+# the earlier publication run. This XGBoost mapping does not match the canonical
+# LightGBM-only attribution export; use only with its historical input artifact.
 BEST_MODEL_PER_TASK = {
     'fibrosis': 'XGBoost',
     'two_stage': 'XGBoost',
@@ -50,7 +52,10 @@ BEST_MODEL_PER_TASK = {
 
 def main():
     if not SHAP_CSV.exists():
-        raise SystemExit(f'{SHAP_CSV} not found — run shap_publication_figures.py first.')
+        raise SystemExit(
+            f'{SHAP_CSV} not found — supply the historical XGBoost publication artifact; '
+            'the canonical LightGBM-only export is not compatible with this helper.'
+        )
 
     try:
         from src.preprocess import prepare_data

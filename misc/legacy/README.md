@@ -11,3 +11,8 @@ not part of the training or evaluation pipeline and should not normally be run:
 The original `src/` entry points remain as compatibility wrappers. Invoke those
 wrappers from `src/`, as before, when reproducing the migration; they preserve
 arguments and the caller's working directory.
+
+* `shap_publication_figures_v1.py` is the pickle-only predecessor of the final
+  manuscript SHAP generator. It has no tracked importer or required path role;
+  use `src/shap_publication_figures.py` instead. The archived script retains its
+  original algorithms and fixed output names for provenance only.

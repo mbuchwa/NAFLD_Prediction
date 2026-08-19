@@ -42,8 +42,7 @@ The pipeline's effective working directory is normally `src`: `../data` means th
 | `select_test_datasets.py` | shared implementation | preprocess; numpy/pandas/scipy/sklearn/matplotlib | module only; caller arrays; no checkpoint | selected arrays/indices and optional diagnostics; **data selection**; preprocess |
 | `shap_both_cohorts_figures.py` | auxiliary | CLI; preprocess, translation map, SHAP/scipy/sklearn | `-m`/script, forces `src`; both cohorts and tree pickles | SHAP/rank/top-five CSV/TeX/figures; **evaluate/report**; derive-top-features/manuscript |
 | `shap_feature_selection_development.py` | exploratory | CLI; preprocess, translation map, SHAP | `-m`/script, forces `src`; development cohorts, LightGBM pickles/prescribed fallback | development all/top3 CSVs; **evaluate/report**; development record only |
-| `shap_publication_figures.py` | auxiliary | CLI; preprocess, translation map, SHAP/scipy/sklearn | `-m`/script, forces `src`; cohorts and **pickle ensembles only** | publication SHAP/ROC/confusion artifacts; **evaluate/report**; derive-top-features/manuscript; neural families are skipped |
-| `shap_publication_figures_v2.py` | primary | CLI; preprocess, validation/networks/helpers, SHAP/torch | `-m`/script, forces `src`; scaled/unscaled cohorts, tree pickles/fallback and native neural artifacts | same artifact names as v1; **evaluate/report**; current broad loader. Archive output before variant comparisons to avoid overwrite. |
+| `shap_publication_figures.py` | primary, canonical | CLI; preprocess, validation/networks/helpers, SHAP/torch | `-m`/script, forces `src`; scaled/unscaled cohorts, tree pickles/fallback and native neural artifacts | final manuscript SHAP/ROC/confusion artifacts; **evaluate/report**; current broad loader. Provenance and mappings are detailed in `SHAP_PROVENANCE.md`. |
 | `stats.py` | exploratory | CLI; preprocess/helpers, scipy/statsmodels/sklearn | script (`src`, bare imports); raw workbooks, imputed test CSVs/text results | stdout/configured outputs; **report**; ad-hoc analysis |
 | `test.py` | primary | run_all_tests; preprocess, translation map, selected models | module/direct script from `src`; cohorts/checkpoints | evaluation metrics/predictions/plots and prevalence CSV; **evaluate**; sweep/aggregators |
 | `test_training_determinism.py` | QC | CLI; preprocess, LightGBM/sklearn | `-m`/script, forces `src`; prepared data; no checkpoint | stdout, explicitly no persistent write; **temporary train/QC**; retraining decision |
@@ -85,7 +84,7 @@ These are module APIs (no supported standalone invocation), expect caller cwd `s
 1. Both `apply_patch_*` scripts are migration aids, not experiments; current comparator code is already integrated.
 2. `select_test_datasets.py` and `utils/smote.py` are libraries, not dataset scripts. Only the former is connected.
 3. The archived `misc/exploratory/variance_test_datasets.py` implementation and `utils/convert_amainz_dat.py` execute on import; the `src/variance_test_datasets.py` compatibility wrapper executes the former only when used as a script.
-4. SHAP variants collide on output names. Prefer v2 for native tree and neural formats, and isolate outputs when comparing variants.
+4. SHAP variants collide on output names. Use the canonical `shap_publication_figures.py`; isolate outputs when reproducing a historical variant.
 5. MCMC-BNN requires paired posterior files and has a parameter-filename mismatch; it is not part of the ordinary evaluation sweep.
 
 ## Relocation decisions

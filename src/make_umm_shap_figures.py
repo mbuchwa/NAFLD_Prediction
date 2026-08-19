@@ -1,10 +1,11 @@
 """
-make_publication_figures.py
-===========================
+make_umm_shap_figures.py
+========================
+HISTORICAL UMM-ONLY VARIANT — use shap_publication_figures.py for final manuscript artifacts.
 Regenerates SHAP analyses and confusion matrices in journal-ready quality and
 exports the numeric SHAP values that the manuscript tables are built from.
 
-Place in:  src/            Run from:  src/  ->  python make_publication_figures.py
+Place in:  src/            Run from:  src/  ->  python make_umm_shap_figures.py
 
 Why this replaces the existing `interpret()` route
 --------------------------------------------------

@@ -54,12 +54,12 @@ All paths in this section are interpreted from `src/`.
 | Producer/layout | Primary artifact | Direct consumers |
 |---|---|---|
 | `src/models/{svm,rf,xgb,light_gbm}/` | `model_<task>.pickle`, a pickled ensemble | `recompute_tables.py`, `recompute_three_stage.py` (XGBoost/LightGBM), `recompute_reduced_tables.py`, `paired_model_comparison.py`, `ordinal_decision_rules.py`, `check_table_figure_consistency.py`, `clinical_utility_from_checkpoints.py`, and the publication/SHAP figure scripts |
-| `src/models/{ffn,vi_bnn,tab_transformer}/` | `model_<task>_<index>.pth` plus `model_params_<task>_<index>.txt`; TabTransformer also writes `<task>_df_cols.txt` | `neural_loaders.py`, then the recomputation and publication scripts through `load_any_ensemble`; `shap_publication_figures_v2.py` also loads state dictionaries directly |
+| `src/models/{ffn,vi_bnn,tab_transformer}/` | `model_<task>_<index>.pth` plus `model_params_<task>_<index>.txt`; TabTransformer also writes `<task>_df_cols.txt` | `neural_loaders.py`, then the recomputation and publication scripts through `load_any_ensemble`; canonical `shap_publication_figures.py` also loads state dictionaries directly |
 | `src/models/gandalf/` | `model_<task>_<index>.pth` directories plus `df_cols.txt` and `model_params_<task>_<index>.txt` | `neural_loaders.py`, then checkpoint-based tables/figures |
 | `src/models/mcmc_bnn/` | `model_<task>_<index>.pth`, `bnn_posterior_samples_<task>_<index>.pth`, and parameter text | the MCMC-BNN evaluation routines in `models/mcmc_bnn.py` |
 | `src/models/<model>_shap_selected/` | the same pickle/per-member convention as the base model | `recompute_reduced_tables.py`; training is driven with `shap_selected=True` |
 | `src/models/<model>_finetuned/` | model-family-specific fine-tuned artifacts | the corresponding family finetuning/evaluation function |
-| `src/models/light_gbm_window/pre7_post0/` | `model_two_stage.pickle` | `shap_feature_selection_development.py`, `clinical_utility_from_checkpoints.py`, and `shap_publication_figures_v2.py` when selecting the manuscript checkpoint |
+| `src/models/light_gbm_window/pre7_post0/` | `model_two_stage.pickle` | `shap_feature_selection_development.py`, `clinical_utility_from_checkpoints.py`, and canonical `shap_publication_figures.py` when selecting the manuscript checkpoint |
 
 The generic binary lookup is
 `src/models/<storage-id>/model_<task>.pickle`.  Per-member neural loaders are a
@@ -117,8 +117,8 @@ This is the main runtime artifact root when commands are run from `src/`.
 | `outputs/tables/paired_model_comparison.csv`/`.tex` | `paired_model_comparison.py` | publication supplement/manual assembly |
 | `outputs/shap_top_features.json` | `derive_shap_top_features.py` from `outputs/figures/shap_all_features.csv` | `preprocess.py` when `shap_selected=True`; `recompute_reduced_tables.py` for feature labels and checkpoint compatibility |
 | `outputs/figures/shap_feature_selection_development_all.csv` and `_top3.csv` | `shap_feature_selection_development.py` | development-only selection audit/manual review; these do **not** replace `outputs/shap_top_features.json` automatically |
-| `outputs/figures/shap_all_features.csv`, `shap_top5.csv`, `shap_rank_agreement.csv`, and `shap_values_<model>_<task>_<cohort>.csv` | `shap_both_cohorts_figures.py` and the `shap_publication_figures*.py` variants | `derive_shap_top_features.py`, `plot_svm_shap.py`, and publication/manual analysis |
-| `outputs/figures/*.{png,pdf}` plus figure CSVs | `make_publication_figures.py`, `make_umm_shap_figures.py`, `shap_both_cohorts_figures.py`, `shap_publication_figures*.py`, cohort/stage/SVM plotters | publication manuscript |
+| `outputs/figures/shap_all_features.csv`, `shap_top5.csv`, `shap_rank_agreement.csv`, and `shap_values_<model>_<task>_<cohort>.csv` | `shap_both_cohorts_figures.py` and the canonical `shap_publication_figures.py` and historical variants | `derive_shap_top_features.py`, `plot_svm_shap.py`, and publication/manual analysis |
+| `outputs/figures/*.{png,pdf}` plus figure CSVs | `make_publication_figures.py`, `make_umm_shap_figures.py`, `shap_both_cohorts_figures.py`, `shap_publication_figures.py` and historical variants, cohort/stage/SVM plotters | publication manuscript |
 | `outputs/clinical_utility/predictions_<task>_<cohort>.csv`, `decision_curve_<task>_<cohort>.csv`, calibration metric CSVs, and calibration/decision-curve PNG/PDF files | `clinical_utility_from_checkpoints.py` | clinical-utility publication figures/tables and manual audit |
 | `outputs/data_qc/*` | `preprocess.py` and data-QC plotters | `make_publication_figures.py`, missingness scripts, and `run_all_tests.py` snapshots |
 | `outputs/robustness/*` | robustness, missingness, and consistency scripts | `print_recommended_lab_window.py` and publication/manual reporting |
@@ -153,7 +153,7 @@ without an explicit migration.
    `recompute_three_stage.py` ->
    `src/outputs/tables/table3_three_stage_recomputed.{csv,tex}`.
 3. **Publication SHAP:** the same model pickles + data from `prepare_data` ->
-   `shap_both_cohorts_figures.py` / `shap_publication_figures*.py` -> figure
+   `shap_publication_figures.py` (canonical; historical alternatives are documented in `SHAP_PROVENANCE.md`) -> figure
    files and SHAP CSVs under `src/outputs/figures/`; `plot_svm_shap.py` consumes
    `shap_all_features.csv`, while `derive_shap_top_features.py` converts it to
    `src/outputs/shap_top_features.json`.

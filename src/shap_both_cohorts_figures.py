@@ -1,6 +1,7 @@
 """
-shap_publication_figures.py
-===========================
+shap_both_cohorts_figures.py
+============================
+HISTORICAL VARIANT — use shap_publication_figures.py for final manuscript artifacts.
 SHAP analyses and confusion matrices in journal-ready quality, plus the numeric
 SHAP values the manuscript tables are built from -- computed for BOTH cohorts.
 
