@@ -6,3 +6,5 @@
 * [`diagnostics/`](diagnostics/) is reserved for genuinely standalone diagnostic utilities; the audit did not identify a current candidate whose move was worth the compatibility cost.
 
 Files that are still imported, participate in dynamic dispatch, consume established pipeline paths, or may be externally imported remain in `src/` and are documented in the audit instead of being moved cosmetically.
+
+* [`../SHAP_PROVENANCE.md`](../SHAP_PROVENANCE.md) identifies the canonical manuscript SHAP entry point and compares the retained historical workflows.
