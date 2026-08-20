@@ -37,15 +37,174 @@ The first command creates the canonical `nafl` environment; the second activates
 
 Access is controlled; consult the manuscript and associated heiDATA record for availability and the request procedure. Authorized researchers must place the three workbooks named in `data/README.md` directly under `data/`. Prerequisites are approved access and the exact original filenames; the main outputs are ignored cleaned tables in `data/preprocessed_no_mice_<split>/` and ten imputed datasets in `data/preprocessed_mice_fib_<split>/`. Never force-add raw or derived patient data to Git.
 
-## Primary workflow (ordered)
+## Reproduction command chain (ordered)
 
-Run legacy analysis entry points from `src/` so their relative `models/`, `outputs/`, and `../data/` paths resolve correctly. Configuration is currently by constants in each script, not command-line arguments.
+The commands below are the result of auditing every entry point and checking the
+training configuration recorded in `RETRAINING_PLAYBOOK.md`. Run them **in this
+order from the repository root**. Entry points marked **checkpoint-only** load
+existing fitted models (although they may regenerate deterministic preprocessing
+files); entries marked **EXPENSIVE TRAINING** fit models and may take hours or
+days. Configuration is by constants in the scripts, not command-line arguments.
+
+1. **Create and activate the environment.**
+
+   ```bash
+   conda env create -f environment.yml
+   conda activate nafl
+   python --version
+   ```
+
+2. **Place the controlled data.** Obtain authorized copies and put the exact
+   filenames below directly in `data/` (do not commit them):
+
+   ```text
+   data/20231129 Lap und Histo Daten von Ines Tuschner.xlsx
+   data/202403 Lap und Histo Daten von Ines Tuschner.xlsx
+   data/20240813-FibrosisDB(302_Patients).xlsx
+   ```
+
+3. **Prepare cohorts, create the fixed split, and perform multiple
+   imputation.** There is no separate current preprocessing CLI and no
+   load-only split CLI. Every call to `prepare_data(...)` first rebuilds the
+   eligible UMM cohort, makes the deterministic patient partitions (seed 42),
+   prepares MAINZ as the external cohort, and writes ten MICE imputations (seeds
+   0--9). Consequently this stage is performed at the start of the training
+   command in step 4; there is no extra command to run here. Generated clean
+   and imputed files are under
+   `data/preprocessed_no_mice_<split>/` and
+   `data/preprocessed_mice_fib_<split>/`. Re-running with the same raw inputs
+   and settings recreates, rather than loads, the fixed split. Do **not** use
+   `python -m src.preprocess` for this chain: its standalone block is a legacy
+   NumPy-export path, not the current cohort-preparation contract.
+
+4. **Run hyperparameter optimization and full-feature training.** Apply the
+   authoritative temporary configuration from `RETRAINING_PLAYBOOK.md`: binary
+   tasks `fibrosis`, `two_stage`, and `cirrhosis`, followed by `three_stage`;
+   all eight reported model families; `SHAP_SELECTED=False`; and scaling only
+   for `vi_bnn`. Record the temporary diff and restore it afterward.
+
+   ```bash
+   # EXPENSIVE TRAINING: optimization plus ten-member/imputation ensembles
+   python -m src.run_all_train_experiments
+   # QC only, after the prepared split has been written
+   python -m src.check_split_stratification
+   ```
+
+   The runner's checked-in constants currently describe the later reduced RF/
+   XGBoost experiment, so they **must be reviewed before this full sweep**.
+   `hypertrain(...)` performs the model-family hyperparameter search and fitting;
+   there is no separate supported optimization CLI.
+
+5. **Evaluate binary models and compute patient-bootstrap intervals.** First
+   make `TASKS`, `MODELS`, `SCALING_MODELS`, and `SHAP_SELECTED=False` in
+   `src/run_all_tests.py` match the full-feature checkpoints. Keep
+   `SELECT_PATIENTS=False` and `SMOTE=False`.
+
+   ```bash
+   # CHECKPOINT-ONLY evaluation (no model fitting)
+   python -m src.run_all_tests
+   # CHECKPOINT-ONLY: binary Tables 1--2 and 1,000-resample 95% intervals
+   python -m src.recompute_tables
+   ```
+
+6. **Evaluate the three-stage endpoint and FIB-4/APRI comparators.** The first
+   command pools the three-stage checkpoint predictions and calculates its
+   bootstrap intervals; it also reads the FIB-4 and APRI fields written into
+   imputation 0. The second performs paired patient-bootstrap model comparisons
+   for the binary endpoints (including the leading model versus FIB-4).
+
+   ```bash
+   # CHECKPOINT-ONLY: three-stage models plus FIB-4/APRI
+   python -m src.recompute_three_stage
+   # CHECKPOINT-ONLY: paired binary comparisons with FIB-4/APRI
+   python -m src.paired_model_comparison
+   ```
+
+   Binary FIB-4/APRI operating-point outputs are also produced automatically by
+   preprocessing; there is no current standalone comparator command.
+
+7. **Generate full-feature SHAP attribution.** This canonical publication SHAP
+   entry point loads fitted tree and neural artifacts and never trains them.
+
+   ```bash
+   # CHECKPOINT-ONLY; computationally substantial attribution/reporting
+   python -m src.shap_publication_figures
+   ```
+
+8. **Select reduced features using development data only.** This procedure
+   explains each full-feature LightGBM ensemble member on its matching UMM
+   *training* imputation. It must precede reduced training; it does not use UMM
+   validation/test or MAINZ patients.
+
+   ```bash
+   # CHECKPOINT-ONLY LightGBM attribution; writes development top-three features
+   python -m src.shap_feature_selection_development
+   ```
+
+9. **Retrain and evaluate the reduced-feature models.** Confirm the generated
+   top-three feature record, then use the checked-in historical reduced setup:
+   the three binary tasks, RF and XGBoost, `SHAP_SELECTED=True`, and no scaling.
+   Make the testing runner match those choices before evaluating.
+
+   ```bash
+   # EXPENSIVE TRAINING: reduced-feature RF/XGBoost optimization and fitting
+   python -m src.run_all_train_experiments
+   # CHECKPOINT-ONLY after matching run_all_tests.py to the reduced setup
+   python -m src.run_all_tests
+   # CHECKPOINT-ONLY reduced-feature Table 5 with bootstrap intervals
+   python -m src.recompute_reduced_tables
+   ```
+
+10. **Compute calibration, Brier metrics, and decision curves.** This single
+    checkpoint reporter writes Brier score, calibration intercept/slope and
+    bootstrap intervals, calibration plots, and decision-curve net benefit for
+    the binary tasks.
+
+    ```bash
+    # CHECKPOINT-ONLY
+    python -m src.clinical_utility_from_checkpoints
+    ```
+
+11. **Create manuscript tables.** The three recomputation commands above are
+    the authoritative checkpoint-derived tables. If structured evaluation JSON
+    was also generated, the legacy aggregation/export commands use `src`-relative
+    paths and do **not** support the repository-root `python -m src.<module>`
+    contract; invoke their actual supported form:
+
+    ```bash
+    (cd src && python aggregate_results.py)
+    (cd src && python make_latex_tables.py)
+    (cd src && python make_reduced_tables.py)
+    ```
+
+12. **Create publication figures and verify table/figure agreement.** These
+    entry points rely on prepared cohorts and existing checkpoints only.
+
+    ```bash
+    # CHECKPOINT-ONLY
+    python -m src.make_publication_figures
+    # CHECKPOINT-ONLY; rerun after reduced checkpoints if reduced SHAP is needed
+    python -m src.shap_publication_figures
+    # CHECKPOINT-ONLY/report-only consistency check
+    python -m src.check_table_figure_consistency
+    ```
+
+Most root-level `python -m` forms above are supported because those entry points
+normalize their working directory to `src`. The exceptions are shown explicitly
+with a root-launched `(cd src && ...)` subshell. Missing controlled workbooks or
+a required checkpoint is a prerequisite failure, not a reason to substitute an
+invocation form. Inspect every sweep failure log: several reporters deliberately
+skip missing or incompatible checkpoints rather than aborting.
+
+## Legacy single-run workflow
+
+The lower-level entry points remain useful for one reviewed model/task. Run them
+from the repository root with module execution.
 
 1. **Configure and train one model/task.** In `train.py`, set `model_name`, `classification_type`, and `shap_selected`; preserve the scaling policy described below.
 
    ```bash
-   cd src
-   python train.py
+   (cd src && PYTHONPATH=.. python -m src.train)
    ```
 
    Prerequisites: active `nafl` environment, controlled workbooks in `data/`, and a reviewed configuration. There is no separate canonical preprocessing command: `train.py` calls `prepare_data(...)`, which performs preprocessing/imputation before training. Main outputs are generated datasets under `data/`, data-QC artifacts, checkpoints under `src/models/<model>/`, and training artifacts under `src/outputs/<model>/`.
@@ -53,7 +212,7 @@ Run legacy analysis entry points from `src/` so their relative `models/`, `outpu
 2. **Evaluate the matching checkpoint once.** Set the same task, model, feature-selection, and scaling choices in `test.py`; retain `select_patients=False` and `smote=False` for external evaluation.
 
    ```bash
-   python test.py
+   (cd src && PYTHONPATH=.. python -m src.test)
    ```
 
    Prerequisites: matching checkpoints and generated data. Main outputs are held-out UMM and external MAINZ metrics/plots under `src/outputs/<model>/` (including `prospective/`) and external prevalence under `src/outputs/external/`. Evaluation preprocessing is combined in this entry point through `prepare_data(...)`.
@@ -61,9 +220,9 @@ Run legacy analysis entry points from `src/` so their relative `models/`, `outpu
 3. **Recompute checkpoint-based manuscript tables.** Run each command only after all checkpoints required by that script exist.
 
    ```bash
-   python recompute_tables.py
-   python recompute_three_stage.py
-   python recompute_reduced_tables.py
+   python -m src.recompute_tables
+   python -m src.recompute_three_stage
+   python -m src.recompute_reduced_tables
    ```
 
    The commands respectively produce binary tables (`src/outputs/tables/tables_recomputed.{csv,tex}`), the ordinal table (`table3_three_stage_recomputed.{csv,tex}`), and reduced-feature results (`table5_reduced_recomputed.{csv,tex}`). The reduced command additionally requires `src/outputs/shap_top_features.json` and matching `*_shap_selected` checkpoints.
@@ -71,10 +230,10 @@ Run legacy analysis entry points from `src/` so their relative `models/`, `outpu
 4. **Generate publication figures and clinical-utility reporting.** These scripts consume generated datasets and compatible checkpoints directly; they do not consume the recomputed table CSVs.
 
    ```bash
-   python make_publication_figures.py
-   python shap_publication_figures.py
-   python clinical_utility_from_checkpoints.py
-   python check_table_figure_consistency.py
+   python -m src.make_publication_figures
+   python -m src.shap_publication_figures
+   python -m src.clinical_utility_from_checkpoints
+   python -m src.check_table_figure_consistency
    ```
 
    Prerequisites: complete checkpoint/data contracts (and SHAP dependencies for SHAP output). Main outputs are publication PNG/PDF/CSV files in `src/outputs/figures/`, calibration metrics/plots and decision curves in `src/outputs/clinical_utility/`, and consistency results in `src/outputs/robustness/`. Missing checkpoints may be skipped by some reporting scripts; inspect warnings and outputs before reporting results.
@@ -82,7 +241,7 @@ Run legacy analysis entry points from `src/` so their relative `models/`, `outpu
 5. **Optionally aggregate legacy JSON metrics.** This is distinct from checkpoint-recomputed tables.
 
    ```bash
-   python aggregate_results.py
+   (cd src && python aggregate_results.py)
    ```
 
    Prerequisites: evaluation `*_metrics.json` files under `src/outputs/`. Main outputs are `src/outputs/results/all_metrics_long.csv` and `manuscript_tables.xlsx`.
@@ -92,12 +251,11 @@ Run legacy analysis entry points from `src/` so their relative `models/`, `outpu
 The wrappers reduce repeated manual calls but remain configuration-driven:
 
 ```bash
-cd src
-PYTHONPATH=.. python run_all_train_experiments.py
-PYTHONPATH=.. python run_all_tests.py
+python -m src.run_all_train_experiments
+python -m src.run_all_tests
 ```
 
-The explicit `PYTHONPATH` makes the repository-level `src` package importable while preserving the required working directory. Before either command, inspect and synchronize `TASKS`, model lists, `SCALING_MODELS`, and `SHAP_SELECTED`; ensure raw data are available, and ensure evaluation checkpoints exist. The training wrapper writes checkpoints plus a failure log in `src/outputs/results/`; the testing wrapper writes per-model metrics, prevalence files, QC snapshots, and a timestamped results/failure-log directory.
+Both wrappers normalize their working directory themselves. Before either command, inspect and synchronize `TASKS`, model lists, `SCALING_MODELS`, and `SHAP_SELECTED`; ensure raw data are available, and ensure evaluation checkpoints exist. The training wrapper writes checkpoints plus a failure log in `src/outputs/results/`; the testing wrapper writes per-model metrics, prevalence files, QC snapshots, and a timestamped results/failure-log directory.
 
 **Important:** the checked-in `run_all_train_experiments.py` is a reduced-feature RF/XGBoost configuration, whereas `run_all_tests.py` currently selects a broader model set with a different scaling configuration. Therefore, the training wrapper **does not currently train all eight reported models** and the two wrappers must not be run as though they were a matched full-study pipeline. Use the documented historical settings in `RETRAINING_PLAYBOOK.md`, make temporary reviewed edits, record the diff, and restore it afterward.
 
