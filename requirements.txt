@@ -1,3 +1,5 @@
+# Alternative/historical pip snapshot; not numerically equivalent to the
+# canonical frozen environment.yml and not an add-on installation for it.
 --extra-index-url https://download.pytorch.org/whl/cu121
 
 torch==2.5.1+cu121
