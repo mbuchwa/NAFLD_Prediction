@@ -31,7 +31,7 @@ conda env create -f environment.yml
 conda activate nafl
 ```
 
-The first command creates the canonical `nafl` environment; the second activates it. `requirements.txt` is retained for compatibility but is not the canonical reproducibility installation.
+The first command creates the canonical `nafl` environment; the second activates it. `requirements.txt` is an alternative/historical pip snapshot, not a numerically equivalent representation of the frozen Conda environment and not the canonical reproducibility installation. See `ENVIRONMENT_AUDIT.md` for the primary-workflow import comparison and the provenance of dependencies absent from the YAML.
 
 ## Controlled data placement
 
